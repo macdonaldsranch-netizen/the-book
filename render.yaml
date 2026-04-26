@@ -1,0 +1,12 @@
+services:
+  - type: web
+    name: the-book-api
+    runtime: docker
+    dockerContext: ./backend
+    dockerfilePath: ./backend/Dockerfile
+    healthCheckPath: /api/health
+    envVars:
+      - key: FIREBASE_PROJECT_ID
+        value: the-book-786
+      - key: GOOGLE_CREDENTIALS_JSON
+        sync: false   # paste your serviceAccountKey.json contents in the Render dashboard
