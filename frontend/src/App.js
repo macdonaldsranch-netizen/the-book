@@ -229,6 +229,40 @@ const BASE_STYLES = `
   /* Theme toggle */
   .theme-toggle { font-size:0.75rem; padding:6px 10px; border-radius:8px; border:1px solid var(--border2); background:transparent; color:var(--muted); cursor:pointer; font-family:inherit; transition:all 130ms; }
   .theme-toggle:hover { background:rgba(128,128,128,0.08); color:var(--ink); }
+
+  /* ── Mobile nav overlay ────────────────────────── */
+  .mobile-overlay { display:none; position:fixed; inset:0; background:rgba(0,0,0,0.50); z-index:199; }
+  .hamburger {
+    display:none; align-items:center; justify-content:center;
+    position:fixed; top:12px; left:14px; z-index:300;
+    background:var(--card); border:1px solid var(--border2); border-radius:10px;
+    width:40px; height:40px; cursor:pointer; color:var(--ink); transition:all 130ms;
+  }
+  .hamburger:hover { border-color:var(--accent); color:var(--accent); }
+
+  /* ── Responsive breakpoints ─────────────────────── */
+  @media (max-width:768px) {
+    .hamburger { display:flex; }
+    .mobile-overlay { display:block; }
+    .sidebar {
+      position:fixed; left:0; top:0; z-index:200; height:100vh;
+      transform:translateX(-100%); transition:transform 220ms ease;
+    }
+    .sidebar.open { transform:translateX(0); box-shadow:8px 0 32px rgba(0,0,0,0.45); }
+    .main { padding:66px 14px 28px; }
+    .page-title { font-size:1.15rem; flex-wrap:wrap; gap:8px; margin-bottom:12px; }
+    .grid2, .grid3, .grid4 { grid-template-columns:1fr; }
+    .form-grid, .form-grid-3 { grid-template-columns:1fr; }
+    .form-full { grid-column:1; }
+    .stat-value { font-size:1.7rem; }
+    .cal-grid { grid-template-columns:54px 1fr; }
+    .cal-staff-col { display:none; }
+    table { font-size:0.80rem; }
+    th, td { padding:7px 8px; }
+    .toast-area { bottom:16px; right:12px; left:12px; }
+    .toast { font-size:0.82rem; }
+    .tbl-wrap td .td-actions { flex-direction:column; }
+  }
 `;
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -332,6 +366,9 @@ const ICONS = {
   check:     'M20 6L9 17l-5-5',
   sun:       'M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42M12 5a7 7 0 100 14A7 7 0 0012 5z',
   moon:      'M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z',
+  message:   'M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z',
+  menu:      'M3 12h18M3 6h18M3 18h18',
+  x:         'M18 6L6 18M6 6l12 12',
 };
 
 // ─── Toast ────────────────────────────────────────────────────────────────────
@@ -499,6 +536,13 @@ export default function App() {
   const [resetLink,    setResetLink]    = useState(null); // { email, link }
   const [users,        setUsers]        = useState([]);
 
+  // ─ Messaging (SMS)
+  const [msgForm,      setMsgForm]      = useState({ recipientType:'date', date:today(), phone:'', message:'' });
+  const [msgSending,   setMsgSending]   = useState(false);
+
+  // ─ Mobile sidebar
+  const [sidebarOpen,  setSidebarOpen]  = useState(false);
+
   const isAdmin = userRole === 'admin';
   const isStaff = userRole === 'staff' || userRole === 'admin';
 
@@ -611,8 +655,8 @@ export default function App() {
     } catch (err) { toast(err.message, 'error'); }
   }
   async function deleteRes(id) {
-    if (!window.confirm('Delete this reservation?')) return;
-    try { await api.deleteReservation(id); toast('Deleted'); loadAll(); }
+    if (!window.confirm('Cancel this reservation? It will be archived but never permanently deleted.')) return;
+    try { await api.deleteReservation(id); toast('Reservation cancelled'); loadAll(); }
     catch (err) { toast(err.message, 'error'); }
   }
 
@@ -653,8 +697,8 @@ export default function App() {
     } catch (err) { toast(err.message, 'error'); }
   }
   async function deleteApt(id) {
-    if (!window.confirm('Delete this appointment?')) return;
-    try { await api.deleteAppointment(id); toast('Deleted'); loadAll(); }
+    if (!window.confirm('Remove this appointment?')) return;
+    try { await api.deleteAppointment(id); toast('Appointment removed'); loadAll(); }
     catch (err) { toast(err.message, 'error'); }
   }
 
@@ -705,6 +749,21 @@ export default function App() {
       const res = await api.resetUserPassword(u.id);
       setResetLink({ email: res.email, link: res.link });
     } catch(err) { toast(err.message, 'error'); }
+  }
+
+  // ── SMS send handler ──────────────────────────────────────────────────
+  async function submitMsg(e) {
+    e.preventDefault();
+    setMsgSending(true);
+    try {
+      const body = { message: msgForm.message };
+      if (msgForm.recipientType === 'date')  body.date = msgForm.date;
+      if (msgForm.recipientType === 'phone') body.to   = msgForm.phone;
+      const r = await api.sendSms(body);
+      toast(`✅ Sent ${r.sent} message${r.sent !== 1 ? 's' : ''}`);
+      setMsgForm(f => ({ ...f, message: '' }));
+    } catch(err) { toast(err.message, 'error'); }
+    finally { setMsgSending(false); }
   }
 
   // ── Modal wrapper component ───────────────────────────────────────────────────
@@ -886,8 +945,18 @@ export default function App() {
 
       {/* Shell */}
       <div className="shell">
+        {/* Hamburger (mobile only) */}
+        <button className="hamburger" aria-label="Open menu" onClick={() => setSidebarOpen(o => !o)}>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d={sidebarOpen ? ICONS.x : ICONS.menu} />
+          </svg>
+        </button>
+
+        {/* Mobile overlay */}
+        {sidebarOpen && <div className="mobile-overlay" onClick={() => setSidebarOpen(false)} />}
+
         {/* Sidebar */}
-        <aside className="sidebar">
+        <aside className={`sidebar${sidebarOpen ? ' open' : ''}`}>
           <div className="logo">
             <div className="logo-icon">🐴</div>
             <div>
@@ -897,20 +966,21 @@ export default function App() {
           </div>
 
           <div className="nav-section">Menu</div>
-          <NavBtn icon={ICONS.dashboard} label="Dashboard"    active={view==='dashboard'}    onClick={() => setView('dashboard')} />
-          <NavBtn icon={ICONS.list}      label="Reservations" active={view==='reservations'} onClick={() => setView('reservations')} />
-          <NavBtn icon={ICONS.users}     label="Staff Appts"  active={view==='appointments'} onClick={() => setView('appointments')} />
-          <NavBtn icon={ICONS.calendar}  label="Day View"     active={view==='calendar'}     onClick={() => setView('calendar')} />
+          <NavBtn icon={ICONS.dashboard} label="Dashboard"    active={view==='dashboard'}    onClick={() => { setView('dashboard');    setSidebarOpen(false); }} />
+          <NavBtn icon={ICONS.list}      label="Reservations" active={view==='reservations'} onClick={() => { setView('reservations'); setSidebarOpen(false); }} />
+          <NavBtn icon={ICONS.users}     label="Staff Appts"  active={view==='appointments'} onClick={() => { setView('appointments'); setSidebarOpen(false); }} />
+          <NavBtn icon={ICONS.calendar}  label="Day View"     active={view==='calendar'}     onClick={() => { setView('calendar');     setSidebarOpen(false); }} />
+          <NavBtn icon={ICONS.message}   label="Messages"     active={view==='messages'}     onClick={() => { setView('messages');     setSidebarOpen(false); }} />
 
           {isAdmin && (
             <>
               <div className="nav-section">Admin</div>
-              <NavBtn icon={ICONS.settings} label="Users"       active={view==='admin'}    onClick={() => setView('admin')} />
+              <NavBtn icon={ICONS.settings} label="Users"       active={view==='admin'}    onClick={() => { setView('admin');    setSidebarOpen(false); }} />
             </>
           )}
 
           <div className="nav-section" style={{marginTop:'auto'}}>Logs</div>
-          <NavBtn icon={ICONS.activity}  label="Activity Log" active={view==='activity'}     onClick={() => setView('activity')} />
+          <NavBtn icon={ICONS.activity}  label="Activity Log" active={view==='activity'}     onClick={() => { setView('activity'); setSidebarOpen(false); }} />
 
           <div style={{padding:'4px 12px', display:'flex', flexDirection:'column', gap:6}}>
             <button className="theme-toggle" onClick={() => setDarkMode(d => !d)}>
@@ -1041,7 +1111,7 @@ export default function App() {
                           <td>
                             <div className="td-actions">
                               <Btn variant="ghost" size="sm" onClick={() => openEditRes(r)}>Edit</Btn>
-                              {isAdmin && <Btn variant="danger" size="sm" onClick={() => deleteRes(r.id)}>Del</Btn>}
+                              {isAdmin && <Btn variant="danger" size="sm" onClick={() => deleteRes(r.id)}>Cancel</Btn>}
                             </div>
                           </td>
                         </tr>
@@ -1078,7 +1148,7 @@ export default function App() {
                           <td>
                             <div className="td-actions">
                               <Btn variant="ghost" size="sm" onClick={() => openEditApt(a)}>Edit</Btn>
-                              <Btn variant="danger" size="sm" onClick={() => deleteApt(a.id)}>Del</Btn>
+                              <Btn variant="danger" size="sm" onClick={() => deleteApt(a.id)}>Remove</Btn>
                             </div>
                           </td>
                         </tr>
@@ -1109,9 +1179,9 @@ export default function App() {
 
               {/* Time-slot grid — matches the paper copy layout */}
               <div className="cal-grid">
-                <div className="cal-header">Time</div>
+                          <div className="cal-header">Time</div>
                 <div className="cal-header">Reservations</div>
-                <div className="cal-header">Staff / Notes</div>
+                <div className="cal-header cal-staff-col">Staff / Notes</div>
 
                 {TIME_SLOTS.map(slot => {
                   const slotRes = calRes.filter(r => r.startTime === slot);
@@ -1131,7 +1201,7 @@ export default function App() {
                           </div>
                         ))}
                       </div>
-                      <div className="cal-cell">
+                      <div className="cal-cell cal-staff-col">
                         {slotApt.map(a => (
                           <div key={a.id} className="cal-note-pill">
                             <strong>{a.title}</strong>{a.owner ? ` — ${a.owner}` : ''}
@@ -1150,6 +1220,75 @@ export default function App() {
               </div>
               {calRes.length === 0 && calApt.length === 0 && (
                 <div className="empty-state" style={{marginTop:20}}>No events for {fmtDate(calDate)}</div>
+              )}
+            </>
+          )}
+
+          {/* ── MESSAGES ── */}
+          {view === 'messages' && (
+            <>
+              <div className="page-title">
+                📲 Messages
+                <span>Send SMS to guests via Twilio</span>
+              </div>
+
+              <Card title="Compose Message">
+                <form onSubmit={submitMsg}>
+                  <div className="form-grid">
+                    <Field label="Send To">
+                      <select value={msgForm.recipientType} onChange={e => setMsgForm({...msgForm, recipientType:e.target.value})}>
+                        <option value="date">All reservations on a date</option>
+                        <option value="phone">Specific phone number</option>
+                      </select>
+                    </Field>
+
+                    {msgForm.recipientType === 'date' && (
+                      <Field label="Date">
+                        <input type="date" required value={msgForm.date} onChange={e => setMsgForm({...msgForm, date:e.target.value})} />
+                      </Field>
+                    )}
+                    {msgForm.recipientType === 'phone' && (
+                      <Field label="Phone Number">
+                        <input type="tel" required placeholder="(555) 000-0000" value={msgForm.phone} onChange={e => setMsgForm({...msgForm, phone:e.target.value})} />
+                      </Field>
+                    )}
+
+                    <Field label="Message" full>
+                      <textarea
+                        required rows={4}
+                        placeholder="Type your message to guests…"
+                        value={msgForm.message}
+                        onChange={e => setMsgForm({...msgForm, message:e.target.value})}
+                      />
+                    </Field>
+                  </div>
+                  <div style={{marginTop:16, display:'flex', gap:12, alignItems:'center', flexWrap:'wrap'}}>
+                    <Btn type="submit" variant="primary" disabled={msgSending}>
+                      {msgSending ? 'Sending…' : '📲 Send SMS'}
+                    </Btn>
+                    <span style={{fontSize:'0.78rem', color:'var(--muted)'}}>Sent via Twilio · guests can reply STOP to opt out</span>
+                  </div>
+                </form>
+              </Card>
+
+              {/* Recipient preview when sending by date */}
+              {msgForm.recipientType === 'date' && msgForm.date && (
+                <Card title={`Recipients — ${fmtDate(msgForm.date)}`} style={{marginTop:16}}>
+                  {reservations.filter(r => r.reservationDate === msgForm.date).length === 0 ? (
+                    <div className="empty-state">No reservations on this date</div>
+                  ) : (
+                    reservations.filter(r => r.reservationDate === msgForm.date).map(r => (
+                      <div key={r.id} style={{display:'flex', alignItems:'center', gap:12, padding:'9px 0', borderBottom:'1px solid var(--border)'}}>
+                        <div style={{flex:1}}>
+                          <strong style={{fontSize:'0.88rem'}}>{r.firstName} {r.lastName}</strong>
+                          <span style={{color:'var(--muted)', fontSize:'0.80rem', marginLeft:10}}>{fmtTime(r.startTime)} · {r.rideType}</span>
+                        </div>
+                        <div style={{fontSize:'0.82rem', color:'var(--muted)'}}>{r.phoneNumber || <span style={{color:'var(--danger)'}}>No phone</span>}</div>
+                        <Badge color={r.phoneNumber ? 'green' : 'red'}>{r.phoneNumber ? '✓ Reachable' : '✗ No phone'}</Badge>
+                      </div>
+                    ))
+                  )}
+                </Card>
               )}
             </>
           )}

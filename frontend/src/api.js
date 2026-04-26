@@ -64,3 +64,7 @@ export const setUserRole         = (uid, role)     => request('POST',   '/users/
 export const disableUser         = (uid)           => request('POST',   '/users/disable', { uid });
 export const enableUser          = (uid)           => request('POST',   '/users/enable', { uid });
 export const resetUserPassword   = (uid)           => request('POST',   '/users/reset-password', { uid });
+
+// ── SMS / Messaging (staff + admin) ──────────────────────────────────────────
+// body: { message, to? } | { message, date? } | { message, reservationIds? }
+export const sendSms             = (body)          => request('POST',   '/sms/send', body);

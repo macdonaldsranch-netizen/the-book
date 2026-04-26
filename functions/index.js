@@ -1,7 +1,13 @@
 'use strict';
 
-const { onRequest } = require('firebase-functions/v2/https');
-const admin       = require('firebase-admin');
+const { onRequest }    = require('firebase-functions/v2/https');
+const { defineSecret } = require('firebase-functions/params');
+const admin            = require('firebase-admin');
+
+// ── Twilio secrets (set via: firebase functions:secrets:set TWILIO_ACCOUNT_SID)
+const twilioSid   = defineSecret('TWILIO_ACCOUNT_SID');
+const twilioToken = defineSecret('TWILIO_AUTH_TOKEN');
+const twilioFrom  = defineSecret('TWILIO_FROM_NUMBER');
 const { getFirestore } = require('firebase-admin/firestore');
 const express     = require('express');
 const cors        = require('cors');
@@ -24,6 +30,26 @@ app.use(express.json());
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 const nowIso = () => new Date().toISOString();
+
+/** Normalise a US phone to E.164, or return null if invalid */
+const normalizePhone = (raw) => {
+  const d = (raw || '').replace(/\D/g, '');
+  if (d.length === 10) return `+1${d}`;
+  if (d.length === 11 && d.startsWith('1')) return `+${d}`;
+  return null;
+};
+
+/** Fire-and-forget Twilio SMS. Returns { sid } or { skipped:true } */
+const sendSms = async (to, body) => {
+  const sid   = process.env.TWILIO_ACCOUNT_SID;
+  const token = process.env.TWILIO_AUTH_TOKEN;
+  const from  = process.env.TWILIO_FROM_NUMBER;
+  if (!sid || !token || !from) return { skipped: true };
+  // eslint-disable-next-line global-require
+  const client = require('twilio')(sid, token);
+  const msg = await client.messages.create({ body, from, to });
+  return { sid: msg.sid };
+};
 
 const buildConfirmation = (reservationDate, count) => {
   const safeDate = (reservationDate || new Date().toISOString().slice(0, 10)).replace(/-/g, '');
@@ -78,7 +104,8 @@ app.get('/api/reservations', verifyToken, requireStaff, async (req, res) => {
       .orderBy('reservationDate')
       .orderBy('startTime')
       .get();
-    res.json(snap.docs.map(docToObj));
+    // Soft-delete filter: never expose logically-deleted records
+    res.json(snap.docs.filter(d => !d.data().deleted).map(docToObj));
   } catch (e) {
     res.status(500).json({ detail: e.message });
   }
@@ -91,6 +118,7 @@ app.post('/api/reservations', verifyToken, requireStaff, async (req, res) => {
     const confNum = buildConfirmation(body.reservationDate, allDocs.size);
     const data    = {
       ...body,
+      deleted:            false,
       confirmationNumber: confNum,
       totalRiders:        (body.adultCount || 1) + (body.childCount || 0),
       createdAt:          nowIso(),
@@ -103,6 +131,22 @@ app.post('/api/reservations', verifyToken, requireStaff, async (req, res) => {
       `${confNum} — ${body.firstName} ${body.lastName} on ${body.reservationDate} at ${body.startTime}`,
       req.user.email,
     );
+
+    // Auto-send SMS confirmation if phone is present and Twilio is configured
+    const phone = normalizePhone(body.phoneNumber);
+    if (phone) {
+      const smsBody = [
+        `Hi ${body.firstName}! Your trail ride at Macdonald's Ranch is confirmed ✅`,
+        `Confirmation: ${confNum}`,
+        `Date: ${body.reservationDate}  Time: ${body.startTime}`,
+        `Riders: ${data.totalRiders}`,
+        `Reply STOP to opt out.`,
+      ].join('\n');
+      sendSms(phone, smsBody)
+        .then(r => { if (!r.skipped) ref.update({ textConfirmationStatus: 'Sent', textConfirmationSentAt: nowIso() }); })
+        .catch(() => {});
+    }
+
     res.status(201).json({ id: ref.id, ...data });
   } catch (e) {
     res.status(500).json({ detail: e.message });
@@ -166,13 +210,15 @@ app.delete('/api/reservations/:id', verifyToken, requireAdmin, async (req, res) 
     if (!snap.exists) return res.status(404).json({ detail: 'Reservation not found' });
 
     const d = snap.data();
-    await ref.delete();
+    if (d.deleted) return res.status(409).json({ detail: 'Already cancelled' });
+    // Soft delete — record is never physically removed
+    await ref.update({ deleted: true, deletedAt: nowIso(), deletedBy: req.user.uid });
     await log(
-      'Reservation deleted',
+      'Reservation cancelled',
       `${d.confirmationNumber || req.params.id} — ${d.firstName || ''} ${d.lastName || ''}`,
       req.user.email,
     );
-    res.json({ status: 'deleted' });
+    res.json({ status: 'cancelled' });
   } catch (e) {
     res.status(500).json({ detail: e.message });
   }
@@ -187,7 +233,7 @@ app.get('/api/appointments', verifyToken, requireStaff, async (req, res) => {
       .orderBy('appointmentDate')
       .orderBy('startTime')
       .get();
-    res.json(snap.docs.map(docToObj));
+    res.json(snap.docs.filter(d => !d.data().deleted).map(docToObj));
   } catch (e) {
     res.status(500).json({ detail: e.message });
   }
@@ -196,7 +242,7 @@ app.get('/api/appointments', verifyToken, requireStaff, async (req, res) => {
 app.post('/api/appointments', verifyToken, requireStaff, async (req, res) => {
   try {
     const body = req.body;
-    const data = { ...body, createdAt: nowIso(), createdBy: req.user.uid };
+    const data = { ...body, deleted: false, createdAt: nowIso(), createdBy: req.user.uid };
     const ref  = await db.collection('appointments').add(data);
     await log(
       'Appointment added',
@@ -230,10 +276,12 @@ app.delete('/api/appointments/:id', verifyToken, requireStaff, async (req, res) 
     const snap = await ref.get();
     if (!snap.exists) return res.status(404).json({ detail: 'Appointment not found' });
 
-    const title = snap.data().title || req.params.id;
-    await ref.delete();
-    await log('Appointment deleted', title, req.user.email);
-    res.json({ status: 'deleted' });
+    const d = snap.data();
+    if (d.deleted) return res.status(409).json({ detail: 'Already removed' });
+    // Soft delete
+    await ref.update({ deleted: true, deletedAt: nowIso(), deletedBy: req.user.uid });
+    await log('Appointment removed', d.title || req.params.id, req.user.email);
+    res.json({ status: 'removed' });
   } catch (e) {
     res.status(500).json({ detail: e.message });
   }
@@ -403,5 +451,68 @@ app.post('/api/users/create', (req, res) => {
   res.status(410).json({ detail: 'Use /api/users/invite instead' });
 });
 
+// ══════════════════════════════════════════════════════════════════════════════
+// SMS / MESSAGING  (staff + admin)
+// ══════════════════════════════════════════════════════════════════════════════
+
+/**
+ * POST /api/sms/send
+ * Body (one of):
+ *   { to: '+1...', message }        — explicit phone number
+ *   { date: 'YYYY-MM-DD', message } — all active reservations on that day
+ *   { reservationIds: [...], message }
+ */
+app.post('/api/sms/send', verifyToken, requireStaff, async (req, res) => {
+  try {
+    const { to, reservationIds, date, message } = req.body;
+    if (!message || !message.trim()) {
+      return res.status(400).json({ detail: 'message is required' });
+    }
+
+    const results = [];
+
+    if (to) {
+      const phone = normalizePhone(to);
+      if (!phone) return res.status(400).json({ detail: 'Invalid phone number' });
+      const r = await sendSms(phone, message.trim());
+      results.push({ to: phone, ...r });
+
+    } else if (Array.isArray(reservationIds) && reservationIds.length) {
+      for (const id of reservationIds) {
+        const snap = await db.collection('reservations').doc(id).get();
+        if (!snap.exists || snap.data().deleted) continue;
+        const phone = normalizePhone(snap.data().phoneNumber);
+        if (!phone) { results.push({ id, skipped: true, reason: 'No valid phone' }); continue; }
+        const r = await sendSms(phone, message.trim());
+        await snap.ref.update({ lastSmsAt: nowIso() }).catch(() => {});
+        results.push({ id, to: phone, ...r });
+      }
+
+    } else if (date) {
+      const snap = await db.collection('reservations').where('reservationDate', '==', date).get();
+      for (const doc of snap.docs) {
+        if (doc.data().deleted) continue;
+        const phone = normalizePhone(doc.data().phoneNumber);
+        if (!phone) { results.push({ id: doc.id, skipped: true, reason: 'No valid phone' }); continue; }
+        const r = await sendSms(phone, message.trim());
+        await doc.ref.update({ lastSmsAt: nowIso() }).catch(() => {});
+        results.push({ id: doc.id, to: phone, ...r });
+      }
+
+    } else {
+      return res.status(400).json({ detail: 'Provide to, reservationIds, or date' });
+    }
+
+    await log(
+      'SMS sent',
+      `${results.filter(r => !r.skipped).length} sent · "${message.trim().slice(0, 60)}"`,
+      req.user.email,
+    );
+    res.json({ sent: results.filter(r => !r.skipped).length, results });
+  } catch (e) {
+    res.status(500).json({ detail: e.message });
+  }
+});
+
 // ── Export as Cloud Function ──────────────────────────────────────────────────
-exports.api = onRequest(app);
+exports.api = onRequest({ secrets: [twilioSid, twilioToken, twilioFrom] }, app);

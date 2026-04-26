@@ -19,13 +19,17 @@ service cloud.firestore {
       allow read:   if isStaff();
       allow create: if isStaff();
       allow update: if isStaff();
-      allow delete: if isAdmin();
+      // No hard deletes — soft-delete (update deleted:true) is the only path
+      allow delete: if false;
     }
 
     // ── appointments (staff scheduling) ──────────────────────────────────
     match /appointments/{id} {
       allow read:   if isStaff();
-      allow write:  if isStaff();
+      allow create: if isStaff();
+      allow update: if isStaff();
+      // No hard deletes
+      allow delete: if false;
     }
 
     // ── activity log (append-only for staff, read for staff) ─────────────
