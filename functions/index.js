@@ -1,14 +1,14 @@
 'use strict';
 
-const functions   = require('firebase-functions');
+const { onRequest } = require('firebase-functions/v2/https');
 const admin       = require('firebase-admin');
+const { getFirestore } = require('firebase-admin/firestore');
 const express     = require('express');
 const cors        = require('cors');
 
 admin.initializeApp();
 
-const db = admin.firestore();
-db.settings({ databaseId: 'thebook' });
+const db   = getFirestore('thebook');
 const auth = admin.auth();
 
 const app = express();
@@ -404,4 +404,4 @@ app.post('/api/users/create', (req, res) => {
 });
 
 // ── Export as Cloud Function ──────────────────────────────────────────────────
-exports.api = functions.https.onRequest(app);
+exports.api = onRequest(app);
