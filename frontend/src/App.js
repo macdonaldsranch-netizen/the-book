@@ -663,6 +663,8 @@ export default function App() {
   const [msgSending,   setMsgSending]   = useState(false);
   const [showMsgModal, setShowMsgModal] = useState(false);   // quick-send from a reservation
   const [msgModalRes,  setMsgModalRes]  = useState(null);    // the reservation being messaged
+  const [quickMsgTpl,  setQuickMsgTpl]  = useState('');      // selected template id
+  const [quickMsgText, setQuickMsgText] = useState('');      // message text in quick-send modal
 
   // ─ Mobile sidebar
   const [sidebarOpen,  setSidebarOpen]  = useState(false);
@@ -962,6 +964,8 @@ export default function App() {
   // ── Quick-send from a reservation ─────────────────────────────────────
   function openMsgForRes(r) {
     setMsgModalRes(r);
+    setQuickMsgTpl('');
+    setQuickMsgText('');
     setShowMsgModal(true);
   }
 
@@ -1203,86 +1207,87 @@ export default function App() {
       )}
 
       {/* Quick-send from a reservation */}
-      {showMsgModal && msgModalRes && (() => {
-        const r = msgModalRes;
-        const [qTpl, setQTpl] = React.useState('');
-        const [qMsg, setQMsg] = React.useState('');
-        function qResolve(text) {
-          const fields = {firstName:'', lastName:'', phoneNumber:'', confirmationNumber:'', rideType:'',
-            reservationDate:'', startTime:'', durationMinutes:'', adultCount:'', childCount:'',
-            totalRiders:'', specialRequests:''};
-          return Object.keys(fields).reduce(
-            (s, k) => s.replace(new RegExp(`\\{${k}\\}`, 'g'), r[k] ?? ''), text
-          );
-        }
-        async function sendQuick(e) {
-          e.preventDefault();
-          if (!qMsg.trim()) return;
-          setMsgSending(true);
-          try {
-            const text = qResolve(qMsg);
-            const res = await api.sendSms({ message: text, reservation_id: r.id });
-            if (res.failed > 0) toast(`⚠ Failed to send`, 'error');
-            else toast(`✅ Message sent to ${r.firstName} ${r.lastName}`);
-            setShowMsgModal(false);
-            setMsgModalRes(null);
-          } catch(err) { toast(err.message, 'error'); }
-          finally { setMsgSending(false); }
-        }
-        return (
-          <Modal title={`📲 Send Message — ${r.firstName} ${r.lastName}`}
-                 onClose={() => { setShowMsgModal(false); setMsgModalRes(null); }}>
-            <div style={{marginBottom:12, fontSize:'0.85rem', color:'var(--muted)'}}>
-              <strong>📞</strong> {r.phoneNumber || <span style={{color:'var(--danger)'}}>No phone number</span>}
-              &nbsp;·&nbsp; {fmtTime(r.startTime)} on {fmtDate(r.reservationDate)} &nbsp;·&nbsp; {r.rideType}
-            </div>
+      {showMsgModal && msgModalRes && (
+        <Modal title={`📲 Send Message — ${msgModalRes.firstName} ${msgModalRes.lastName}`}
+               onClose={() => { setShowMsgModal(false); setMsgModalRes(null); setQuickMsgTpl(''); setQuickMsgText(''); }}>
+          <div style={{marginBottom:12, fontSize:'0.85rem', color:'var(--muted)'}}>
+            <strong>📞</strong>&nbsp;
+            {msgModalRes.phoneNumber
+              ? msgModalRes.phoneNumber
+              : <span style={{color:'var(--danger)', fontWeight:600}}>⚠ No phone number on this reservation — cannot send SMS</span>}
+            &nbsp;·&nbsp;{fmtTime(msgModalRes.startTime)} on {fmtDate(msgModalRes.reservationDate)}&nbsp;·&nbsp;{msgModalRes.rideType}
+          </div>
 
-            {/* Template picker */}
-            <div style={{marginBottom:12}}>
-              <div style={{fontSize:'0.75rem', color:'var(--muted)', marginBottom:6, fontWeight:600, textTransform:'uppercase', letterSpacing:'0.06em'}}>Template</div>
-              <div style={{display:'flex', flexWrap:'wrap', gap:6}}>
-                {SMS_TEMPLATES.map(t => (
-                  <button key={t.id} type="button"
-                    style={{padding:'5px 12px', borderRadius:8, border:'1px solid var(--border2)',
-                      background: qTpl === t.id ? 'rgba(97,243,211,0.10)' : 'transparent',
-                      borderColor: qTpl === t.id ? 'var(--accent)' : 'var(--border2)',
-                      color: qTpl === t.id ? 'var(--accent)' : 'var(--ink)',
-                      cursor:'pointer', fontFamily:'inherit', fontSize:'0.80rem'}}
-                    onClick={() => {
-                      setQTpl(t.id);
-                      setQMsg(t.id === 'custom' ? '' : t.body);
-                    }}>
-                    {t.icon} {t.label}
-                  </button>
-                ))}
-              </div>
+          {/* Template picker */}
+          <div style={{marginBottom:12}}>
+            <div style={{fontSize:'0.75rem', color:'var(--muted)', marginBottom:6, fontWeight:600, textTransform:'uppercase', letterSpacing:'0.06em'}}>Template</div>
+            <div style={{display:'flex', flexWrap:'wrap', gap:6}}>
+              {SMS_TEMPLATES.map(t => (
+                <button key={t.id} type="button"
+                  style={{padding:'5px 12px', borderRadius:8, border:'1px solid',
+                    borderColor: quickMsgTpl === t.id ? 'var(--accent)' : 'var(--border2)',
+                    background:  quickMsgTpl === t.id ? 'rgba(97,243,211,0.10)' : 'transparent',
+                    color:       quickMsgTpl === t.id ? 'var(--accent)' : 'var(--ink)',
+                    cursor:'pointer', fontFamily:'inherit', fontSize:'0.80rem'}}
+                  onClick={() => {
+                    setQuickMsgTpl(t.id);
+                    setQuickMsgText(t.id === 'custom' ? '' : t.body);
+                  }}>
+                  {t.icon} {t.label}
+                </button>
+              ))}
             </div>
+          </div>
 
-            <form onSubmit={sendQuick}>
-              <Field label={`Message${qMsg ? ` (${qMsg.length} chars)` : ''}`} full>
-                <textarea rows={5} required value={qMsg} placeholder="Pick a template or type a message…"
-                  onChange={e => setQMsg(e.target.value)} />
+          <form onSubmit={async e => {
+            e.preventDefault();
+            if (!quickMsgText.trim()) return;
+            setMsgSending(true);
+            try {
+              const fields = ['firstName','lastName','phoneNumber','confirmationNumber','rideType',
+                'reservationDate','startTime','durationMinutes','adultCount','childCount','totalRiders','specialRequests'];
+              const resolved = fields.reduce(
+                (s, k) => s.replace(new RegExp(`\\{${k}\\}`, 'g'), msgModalRes[k] ?? ''), quickMsgText
+              );
+              const res = await api.sendSms({ message: resolved, reservation_id: msgModalRes.id });
+              if (res.failed > 0) toast('⚠ Message failed to send', 'error');
+              else toast(`✅ Message sent to ${msgModalRes.firstName} ${msgModalRes.lastName}`);
+              setShowMsgModal(false);
+              setMsgModalRes(null);
+              setQuickMsgTpl('');
+              setQuickMsgText('');
+            } catch(err) { toast(err.message, 'error'); }
+            finally { setMsgSending(false); }
+          }}>
+            <Field label={`Message${quickMsgText ? ` (${quickMsgText.length} chars)` : ''}`} full>
+              <textarea rows={5} required value={quickMsgText}
+                placeholder="Pick a template above or type a message…"
+                onChange={e => setQuickMsgText(e.target.value)} />
+            </Field>
+
+            {/* Live preview with this guest's data */}
+            {quickMsgText && msgModalRes && (
+              <Field label="Preview (with this guest's data)" full>
+                <div className="msg-preview">
+                  {['firstName','lastName','phoneNumber','confirmationNumber','rideType',
+                    'reservationDate','startTime','durationMinutes','adultCount','childCount','totalRiders','specialRequests']
+                    .reduce((s, k) => s.replace(new RegExp(`\\{${k}\\}`, 'g'), msgModalRes[k] ?? ''), quickMsgText)}
+                </div>
               </Field>
+            )}
 
-              {/* Live preview */}
-              {qMsg && (
-                <Field label="Preview (with this guest's data)" full>
-                  <div className="msg-preview">{qResolve(qMsg)}</div>
-                </Field>
-              )}
-
-              <div style={{marginTop:16, display:'flex', gap:10}}>
-                <Btn type="submit" variant="primary" disabled={msgSending || !qMsg.trim() || !r.phoneNumber}>
-                  {msgSending ? 'Sending…' : '📲 Send'}
-                </Btn>
-                <Btn type="button" onClick={() => { setShowMsgModal(false); setMsgModalRes(null); }}>
-                  Cancel
-                </Btn>
-              </div>
-            </form>
-          </Modal>
-        );
-      })()}
+            <div style={{marginTop:16, display:'flex', gap:10}}>
+              <Btn type="submit" variant="primary"
+                disabled={msgSending || !quickMsgText.trim() || !msgModalRes.phoneNumber}>
+                {msgSending ? 'Sending…' : '📲 Send'}
+              </Btn>
+              <Btn type="button" onClick={() => { setShowMsgModal(false); setMsgModalRes(null); setQuickMsgTpl(''); setQuickMsgText(''); }}>
+                Cancel
+              </Btn>
+            </div>
+          </form>
+        </Modal>
+      )}
 
       {/* Shell */}
       <div className="shell">
@@ -1471,7 +1476,7 @@ export default function App() {
                           <td>
                             <div className="td-actions">
                               {r.status !== 'cancelled' && <Btn variant="ghost" size="sm" onClick={() => openEditRes(r)}>Edit</Btn>}
-                              {r.phoneNumber && <Btn variant="ghost" size="sm" onClick={() => { setMsgModalRes(r); setShowMsgModal(true); }}>📲</Btn>}
+                              <Btn variant="ghost" size="sm" onClick={() => openMsgForRes(r)}>📲</Btn>
                               {isAdmin && r.status !== 'cancelled' && <Btn variant="danger" size="sm" onClick={() => deleteRes(r.id)}>Cancel</Btn>}
                             </div>
                           </td>
@@ -1587,7 +1592,7 @@ export default function App() {
                             </button>
                             {r.phoneNumber && (
                               <button style={{marginLeft:6, fontSize:'0.72rem', background:'transparent', border:'none', cursor:'pointer', color:'var(--accent)', padding:'2px 4px'}}
-                                onClick={() => { setMsgModalRes(r); setShowMsgModal(true); }}
+                                onClick={() => openMsgForRes(r)}
                                 title={`Send message to ${r.firstName}`}>📲</button>
                             )}
                           </div>
