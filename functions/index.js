@@ -451,64 +451,115 @@ app.post('/api/users/create', (req, res) => {
   res.status(410).json({ detail: 'Use /api/users/invite instead' });
 });
 
+app.post('/api/users/set-password', verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const { uid, password } = req.body;
+    if (!uid || !password) return res.status(400).json({ detail: 'uid and password required' });
+    if (password.length < 6) return res.status(400).json({ detail: 'Password must be at least 6 characters' });
+    await auth.updateUser(uid, { password });
+    const userRecord = await auth.getUser(uid);
+    await log('Password updated', userRecord.email, req.user.email);
+    res.json({ status: 'updated' });
+  } catch (e) {
+    res.status(400).json({ detail: e.message });
+  }
+});
+
 // ══════════════════════════════════════════════════════════════════════════════
 // SMS / MESSAGING  (staff + admin)
 // ══════════════════════════════════════════════════════════════════════════════
 
+/** Replace {token} placeholders in a message with reservation field values */
+const resolveTemplate = (message, res) => {
+  const fields = ['firstName','lastName','phoneNumber','confirmationNumber','rideType',
+    'reservationDate','startTime','durationMinutes','adultCount','childCount',
+    'totalRiders','specialRequests','guideCount'];
+  return fields.reduce(
+    (s, k) => s.replace(new RegExp(`\\{${k}\\}`, 'g'), res[k] != null ? String(res[k]) : ''),
+    message
+  );
+};
+
 /**
  * POST /api/sms/send
- * Body (one of):
- *   { to: '+1...', message }        — explicit phone number
- *   { date: 'YYYY-MM-DD', message } — all active reservations on that day
- *   { reservationIds: [...], message }
+ * Body selectors (pick one):
+ *   { to, message }                              — specific phone number
+ *   { reservation_id, message }                  — single reservation (resolves phone)
+ *   { date, message }                            — all on a date
+ *   { date, time, message }                      — all on a date at a time
+ *   { date, time_from, time_to, message }        — all on a date in a time range
+ *   { date_from, date_to, message }              — all in a date range
  */
 app.post('/api/sms/send', verifyToken, requireStaff, async (req, res) => {
   try {
-    const { to, reservationIds, date, message } = req.body;
+    const { to, reservation_id, date, time, time_from, time_to, date_from, date_to, message } = req.body;
     if (!message || !message.trim()) {
       return res.status(400).json({ detail: 'message is required' });
     }
 
-    const results = [];
+    // Build list of { phone, resData } targets
+    const targets = []; // { phone: string, resData: object|null }
 
     if (to) {
+      // Specific phone — no reservation context for template resolution
       const phone = normalizePhone(to);
       if (!phone) return res.status(400).json({ detail: 'Invalid phone number' });
-      const r = await sendSms(phone, message.trim());
-      results.push({ to: phone, ...r });
+      targets.push({ phone, resData: null });
 
-    } else if (Array.isArray(reservationIds) && reservationIds.length) {
-      for (const id of reservationIds) {
-        const snap = await db.collection('reservations').doc(id).get();
-        if (!snap.exists || snap.data().deleted) continue;
-        const phone = normalizePhone(snap.data().phoneNumber);
-        if (!phone) { results.push({ id, skipped: true, reason: 'No valid phone' }); continue; }
-        const r = await sendSms(phone, message.trim());
-        await snap.ref.update({ lastSmsAt: nowIso() }).catch(() => {});
-        results.push({ id, to: phone, ...r });
-      }
-
-    } else if (date) {
-      const snap = await db.collection('reservations').where('reservationDate', '==', date).get();
-      for (const doc of snap.docs) {
-        if (doc.data().deleted) continue;
-        const phone = normalizePhone(doc.data().phoneNumber);
-        if (!phone) { results.push({ id: doc.id, skipped: true, reason: 'No valid phone' }); continue; }
-        const r = await sendSms(phone, message.trim());
-        await doc.ref.update({ lastSmsAt: nowIso() }).catch(() => {});
-        results.push({ id: doc.id, to: phone, ...r });
-      }
+    } else if (reservation_id) {
+      const snap = await db.collection('reservations').doc(reservation_id).get();
+      if (!snap.exists) return res.status(404).json({ detail: 'Reservation not found' });
+      const data = snap.data();
+      const phone = normalizePhone(data.phoneNumber);
+      if (!phone) return res.status(400).json({ detail: 'Reservation has no valid phone number' });
+      targets.push({ phone, resData: { id: snap.id, ...data } });
 
     } else {
-      return res.status(400).json({ detail: 'Provide to, reservationIds, or date' });
+      // Query-based — collect matching reservations
+      let query = db.collection('reservations');
+
+      if (date && !date_from) {
+        query = query.where('reservationDate', '==', date);
+      } else if (date_from && date_to) {
+        query = query.where('reservationDate', '>=', date_from).where('reservationDate', '<=', date_to);
+      } else if (date_from) {
+        query = query.where('reservationDate', '>=', date_from);
+      } else {
+        return res.status(400).json({ detail: 'Provide to, reservation_id, date, or date range' });
+      }
+
+      const snap = await query.get();
+      for (const doc of snap.docs) {
+        const data = doc.data();
+        if (data.deleted || data.status === 'cancelled') continue;
+        // Apply time filters
+        if (time && data.startTime !== time) continue;
+        if (time_from && time_to && !(time_from <= (data.startTime || '') && (data.startTime || '') <= time_to)) continue;
+        const phone = normalizePhone(data.phoneNumber);
+        if (phone) targets.push({ phone, resData: { id: doc.id, ...data } });
+      }
     }
 
-    await log(
-      'SMS sent',
-      `${results.filter(r => !r.skipped).length} sent · "${message.trim().slice(0, 60)}"`,
-      req.user.email,
-    );
-    res.json({ sent: results.filter(r => !r.skipped).length, results });
+    if (!targets.length) {
+      return res.json({ sent: 0, failed: 0, skipped: 0, detail: 'No reachable recipients found' });
+    }
+
+    // De-duplicate by phone (keep last seen reservation context)
+    const seen = new Map();
+    for (const t of targets) seen.set(t.phone, t);
+    const skipped = targets.length - seen.size;
+
+    let sent = 0, failed = 0;
+    for (const { phone, resData } of seen.values()) {
+      const text = resData ? resolveTemplate(message.trim(), resData) : message.trim();
+      const r = await sendSms(phone, text);
+      if (r.skipped) { /* Twilio not configured — dry run */ sent++; }
+      else if (r.sid) { await db.collection('reservations').doc(resData?.id || '_').update({ lastSmsAt: nowIso() }).catch(() => {}); sent++; }
+      else failed++;
+    }
+
+    await log('SMS sent', `${sent} sent · "${message.trim().slice(0, 60)}"`, req.user.email);
+    res.json({ sent, failed, skipped });
   } catch (e) {
     res.status(500).json({ detail: e.message });
   }
