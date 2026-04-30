@@ -112,12 +112,49 @@ def _doc_to_dict(doc) -> dict:
     d["id"] = doc.id
     return d
 
+# ── Reservation field-level diff ───────────────────────────────────────────────
+_DIFF_LABELS = {
+    "reservationDate":        "Date",
+    "startTime":              "Start Time",
+    "durationMinutes":        "Duration (min)",
+    "rideType":               "Ride Type",
+    "customRideType":         "Custom Ride Type",
+    "firstName":              "First Name",
+    "lastName":               "Last Name",
+    "phoneNumber":            "Phone",
+    "adultCount":             "Adults",
+    "childCount":             "Children",
+    "childAges":              "Child Ages",
+    "depositAmount":          "Deposit ($)",
+    "discountAmount":         "Discount ($)",
+    "discountReason":         "Discount Reason",
+    "cardType":               "Card Type",
+    "cardLast4":              "Card Last 4",
+    "specialRequests":        "Special Requests",
+    "notes":                  "Notes",
+    "guideCount":             "Guides",
+    "bookedToCapacity":       "Booked to Capacity",
+    "textConfirmationStatus": "Text Status",
+    "followUpStatus":         "Follow-up",
+    "status":                 "Status",
+}
+
+def _res_diff(old: dict, new_data: dict) -> str:
+    changes = []
+    for field, label in _DIFF_LABELS.items():
+        old_val = old.get(field)
+        new_val = new_data.get(field)
+        if str(old_val) != str(new_val):
+            changes.append(f"{label}: {old_val}→{new_val}")
+    return "; ".join(changes)
+
 # ── Pydantic models ────────────────────────────────────────────────────────────
 class ReservationIn(BaseModel):
     reservationDate:        str
     startTime:              str
     durationMinutes:        int         = 60
     rideType:               str         = "Group"
+    customRideType:         str         = ""
     firstName:              str
     lastName:               str
     phoneNumber:            str         = ""
@@ -125,6 +162,8 @@ class ReservationIn(BaseModel):
     childCount:             int         = 0
     childAges:              str         = ""
     depositAmount:          float       = 0.0
+    discountAmount:         float       = 0.0
+    discountReason:         str         = ""
     cardType:               str         = ""
     cardLast4:              str         = ""
     specialRequests:        str         = ""
@@ -134,6 +173,7 @@ class ReservationIn(BaseModel):
     textConfirmationStatus: str         = "Pending"
     followUpStatus:         str         = "Pending"
     attendanceStatus:       Optional[str] = None   # None | checked-in | no-show
+    status:                 str         = "active"  # active | cancelled
 
 class AppointmentIn(BaseModel):
     title:           str
@@ -206,9 +246,12 @@ def update_reservation(doc_id: str, body: ReservationIn, token: TokenData = Depe
 
     ref.update(data)
     existing = snap.to_dict()
-    _log("Reservation updated",
-         f"{existing.get('confirmationNumber', doc_id)} — {body.firstName} {body.lastName} on {body.reservationDate}",
-         token.email)
+    conf_num = existing.get("confirmationNumber", doc_id)
+    diff = _res_diff(existing, data)
+    detail = f"{conf_num} — {body.firstName} {body.lastName} on {body.reservationDate}"
+    if diff:
+        detail += f" | {diff}"
+    _log("Reservation updated", detail, token.email)
     return {"status": "updated", "id": doc_id}
 
 
@@ -237,11 +280,11 @@ def delete_reservation(doc_id: str, token: TokenData = Depends(require_admin)):
     if not snap.exists:
         raise HTTPException(status_code=404, detail="Reservation not found")
     d = snap.to_dict()
-    ref.delete()
-    _log("Reservation deleted",
+    ref.update({"status": "cancelled", "cancelledAt": _now_iso(), "cancelledBy": token.uid, "updatedAt": _now_iso()})
+    _log("Reservation cancelled",
          f"{d.get('confirmationNumber', doc_id)} — {d.get('firstName', '')} {d.get('lastName', '')}",
          token.email)
-    return {"status": "deleted"}
+    return {"status": "cancelled"}
 
 # ══════════════════════════════════════════════════════════════════════════════
 # APPOINTMENTS
@@ -443,9 +486,179 @@ async def invite_user(request: Request, token: TokenData = Depends(require_admin
         "createdAt": _now_iso(),
         "createdBy": token.uid,
     })
-    _log("User invited", f"{email} as {role}", token.email)
+    _log("User added", f"{email} as {role}", token.email)
     return {"status": "created", "uid": user_record.uid, "email": email, "role": role}
 
+
+class SetPasswordIn(BaseModel):
+    uid:      str
+    password: str
+
+@app.post("/api/users/set-password")
+def set_user_password(body: SetPasswordIn, token: TokenData = Depends(require_admin)):
+    if len(body.password) < 6:
+        raise HTTPException(status_code=400, detail="Password must be at least 6 characters")
+    try:
+        auth.update_user(body.uid, password=body.password)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    _log("Password changed by admin", body.uid, token.email)
+    return {"status": "updated"}
+
+
+# ── Health check ───────────────────────────────────────────────────────────────
+@app.get("/api/health")
+def health():
+    return {"status": "ok", "project": _project}
+
+# ══════════════════════════════════════════════════════════════════════════════
+# SMS / MESSAGING
+# ══════════════════════════════════════════════════════════════════════════════
+
+class SmsIn(BaseModel):
+    message:        str
+    # recipient selectors — at least one required
+    to:             Optional[str]       = None   # specific phone number
+    reservation_id: Optional[str]       = None   # single reservation
+    date:           Optional[str]       = None   # all on a date  (YYYY-MM-DD)
+    time:           Optional[str]       = None   # all on a date+time (requires date)
+    time_from:      Optional[str]       = None   # time-range start (requires date)
+    time_to:        Optional[str]       = None   # time-range end   (requires date)
+    date_from:      Optional[str]       = None   # date-range start
+    date_to:        Optional[str]       = None   # date-range end
+
+def _resolve_template(message: str, res: dict) -> str:
+    """Replace {field} tokens in message with values from a reservation dict."""
+    replacements = {
+        "firstName":          res.get("firstName", ""),
+        "lastName":           res.get("lastName", ""),
+        "fullName":           f"{res.get('firstName','')} {res.get('lastName','')}".strip(),
+        "confirmationNumber": res.get("confirmationNumber", ""),
+        "reservationDate":    res.get("reservationDate", ""),
+        "startTime":          res.get("startTime", ""),
+        "rideType":           res.get("rideType", ""),
+        "totalRiders":        str(res.get("totalRiders", "")),
+        "adultCount":         str(res.get("adultCount", "")),
+        "childCount":         str(res.get("childCount", "")),
+        "phoneNumber":        res.get("phoneNumber", ""),
+        "specialRequests":    res.get("specialRequests", ""),
+        "guideCount":         str(res.get("guideCount", "")),
+    }
+    for key, val in replacements.items():
+        message = message.replace("{" + key + "}", val)
+    return message
+
+def _send_twilio(to: str, body: str) -> bool:
+    """Send a single SMS via Twilio. Returns True on success, False on failure.
+    Falls back to a dry-run log when Twilio credentials are not configured."""
+    account_sid = os.getenv("TWILIO_ACCOUNT_SID", "")
+    auth_token  = os.getenv("TWILIO_AUTH_TOKEN",  "")
+    from_number = os.getenv("TWILIO_FROM_NUMBER", "")
+
+    if not (account_sid and auth_token and from_number):
+        # Dry-run: log but don't fail — useful in dev/demo mode
+        print(f"[SMS DRY-RUN] to={to} | body={body}")
+        return True
+
+    try:
+        from twilio.rest import Client as TwilioClient
+        client = TwilioClient(account_sid, auth_token)
+        client.messages.create(body=body, from_=from_number, to=to)
+        return True
+    except Exception as exc:
+        print(f"[SMS ERROR] to={to}: {exc}")
+        return False
+
+@app.post("/api/sms/send")
+def send_sms(body: SmsIn, token: TokenData = Depends(require_staff)):
+    if not body.message or not body.message.strip():
+        raise HTTPException(status_code=400, detail="Message body is required")
+
+    sent = 0
+    failed = 0
+    recipients: list[dict] = []   # [{phone, res}] — res may be None for raw 'to'
+
+    # ── 1. Specific phone number (no reservation context) ──────────────────
+    if body.to:
+        recipients.append({"phone": body.to, "res": None})
+
+    # ── 2. Single reservation ──────────────────────────────────────────────
+    elif body.reservation_id:
+        snap = db.collection("reservations").document(body.reservation_id).get()
+        if not snap.exists:
+            raise HTTPException(status_code=404, detail="Reservation not found")
+        res = _doc_to_dict(snap)
+        if not res.get("phoneNumber"):
+            raise HTTPException(status_code=400, detail="Reservation has no phone number")
+        recipients.append({"phone": res["phoneNumber"], "res": res})
+
+    # ── 3. All reservations on a date ──────────────────────────────────────
+    elif body.date and not body.time and not body.time_from:
+        docs = db.collection("reservations").where("reservationDate", "==", body.date).stream()
+        for d in docs:
+            res = _doc_to_dict(d)
+            if res.get("phoneNumber") and res.get("status") != "cancelled":
+                recipients.append({"phone": res["phoneNumber"], "res": res})
+
+    # ── 4. All reservations on a date at a specific time ───────────────────
+    elif body.date and body.time:
+        docs = (db.collection("reservations")
+                  .where("reservationDate", "==", body.date)
+                  .where("startTime",       "==", body.time)
+                  .stream())
+        for d in docs:
+            res = _doc_to_dict(d)
+            if res.get("phoneNumber") and res.get("status") != "cancelled":
+                recipients.append({"phone": res["phoneNumber"], "res": res})
+
+    # ── 5. All reservations on a date within a time range ──────────────────
+    elif body.date and body.time_from and body.time_to:
+        docs = db.collection("reservations").where("reservationDate", "==", body.date).stream()
+        for d in docs:
+            res = _doc_to_dict(d)
+            st = res.get("startTime", "")
+            if (res.get("phoneNumber") and res.get("status") != "cancelled"
+                    and body.time_from <= st <= body.time_to):
+                recipients.append({"phone": res["phoneNumber"], "res": res})
+
+    # ── 6. All reservations over a date range ──────────────────────────────
+    elif body.date_from and body.date_to:
+        docs = (db.collection("reservations")
+                  .where("reservationDate", ">=", body.date_from)
+                  .where("reservationDate", "<=", body.date_to)
+                  .stream())
+        for d in docs:
+            res = _doc_to_dict(d)
+            if res.get("phoneNumber") and res.get("status") != "cancelled":
+                recipients.append({"phone": res["phoneNumber"], "res": res})
+
+    else:
+        raise HTTPException(status_code=400, detail="No valid recipient selector provided")
+
+    if not recipients:
+        return {"sent": 0, "failed": 0, "skipped": 0,
+                "detail": "No reachable recipients found for the given criteria"}
+
+    # De-duplicate by phone number but keep last seen reservation context
+    seen: dict[str, dict] = {}
+    for r in recipients:
+        seen[r["phone"]] = r
+
+    skipped = len(recipients) - len(seen)
+
+    for item in seen.values():
+        phone = item["phone"]
+        res   = item["res"]
+        text  = _resolve_template(body.message, res) if res else body.message
+        if _send_twilio(phone, text):
+            sent += 1
+        else:
+            failed += 1
+
+    _log("SMS sent",
+         f"{sent} message(s) sent | selector: "
+         f"{'to=' + body.to if body.to else 'date=' + (body.date or '') + ' time=' + (body.time or '') + ' range=' + (body.time_from or '') + '-' + (body.time_to or '') + ' dates=' + (body.date_from or '') + '-' + (body.date_to or '') + ' res=' + (body.reservation_id or '')}",
+         token.email)
 
 # ── Health check ───────────────────────────────────────────────────────────────
 @app.get("/api/health")

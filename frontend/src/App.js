@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { onAuthStateChanged, signInWithEmailAndPassword, signOut, signInWithPopup, GoogleAuthProvider } from 'firebase/auth';
+import { onAuthStateChanged, signInWithEmailAndPassword, signOut, signInWithPopup, GoogleAuthProvider, updatePassword, EmailAuthProvider, reauthenticateWithCredential } from 'firebase/auth';
 import { firebaseAuth } from './firebase';
 
 const googleProvider = new GoogleAuthProvider();
@@ -153,18 +153,30 @@ const BASE_STYLES = `
   .count-pill { background:rgba(97,243,211,0.10); border:1px solid rgba(97,243,211,0.2); color:var(--accent); border-radius:99px; padding:4px 12px; font-size:0.78rem; font-weight:600; }
 
   /* Day calendar */
-  .cal-grid { display:grid; grid-template-columns:70px 1fr 1fr; border:1px solid var(--border); border-radius:14px; overflow:hidden; }
+  .cal-grid { display:grid; grid-template-columns:70px 88px 1fr 1fr; border:1px solid var(--border); border-radius:14px; overflow:hidden; }
   .cal-header { font-size:0.73rem; font-weight:700; color:var(--muted); text-transform:uppercase; letter-spacing:0.06em; padding:10px 14px; background:var(--card); border-bottom:1px solid var(--border); }
   .cal-time { font-size:0.78rem; font-weight:700; color:var(--accent); padding:10px 12px; border-bottom:1px solid var(--border); background:var(--card); display:flex; align-items:flex-start; }
   .cal-cell { padding:6px 10px; border-bottom:1px solid var(--border); border-left:1px solid var(--border); min-height:52px; vertical-align:top; }
   .cal-cell:empty::after { content:'—'; color:var(--muted); opacity:0.4; font-size:0.78rem; }
-  .cal-res-pill { background:rgba(97,243,211,0.08); border:1px solid rgba(97,243,211,0.20); border-radius:8px; padding:5px 9px; margin-bottom:4px; font-size:0.80rem; }
-  .cal-res-pill.booked { background:rgba(255,107,107,0.08); border-color:rgba(255,107,107,0.22); }
+  .cal-totals-col { padding:6px 10px; border-bottom:1px solid var(--border); border-left:1px solid var(--border); min-height:52px; display:flex; flex-direction:column; justify-content:center; gap:5px; }
+  .tot-chip { display:inline-flex; align-items:center; gap:4px; font-size:0.76rem; font-weight:700; white-space:nowrap; }
+  .tot-chip .tot-num { font-size:0.88rem; }
+  .tot-chip.tot-a { color:var(--accent2); }
+  .tot-chip.tot-c { color:var(--accent3); }
+  .day-totals-bar { display:flex; gap:18px; align-items:center; background:var(--card); border:1px solid var(--border); border-radius:10px; padding:8px 16px; margin-bottom:12px; font-size:0.82rem; }
+  .day-totals-bar .dtb-label { font-weight:600; color:var(--muted); margin-right:4px; }
+  .day-totals-bar .dtb-a { color:var(--accent2); font-weight:700; }
+  .day-totals-bar .dtb-c { color:var(--accent3); font-weight:700; }
+  .day-totals-bar .dtb-t { color:var(--accent);  font-weight:700; }
+  .cal-res-pill { border:1px solid; border-radius:8px; padding:5px 9px; margin-bottom:4px; font-size:0.80rem; }
+  .cal-res-pill.booked { background:rgba(255,107,107,0.08) !important; border-color:rgba(255,107,107,0.22) !important; }
   .cal-res-sentence { font-size:0.77rem; color:var(--muted); margin-top:2px; line-height:1.5; }
   .cal-note-pill { background:rgba(143,124,255,0.08); border:1px solid rgba(143,124,255,0.20); border-radius:8px; padding:5px 9px; margin-bottom:4px; font-size:0.80rem; }
   .attendance-btn { font-size:0.70rem; padding:2px 8px; border-radius:6px; border:1px solid var(--border2); background:transparent; cursor:pointer; margin-top:3px; font-family:inherit; color:var(--muted); }
   .attendance-btn.checked-in { background:rgba(92,230,154,0.12); color:var(--success); border-color:rgba(92,230,154,0.3); }
   .attendance-btn.no-show    { background:rgba(255,107,107,0.12); color:var(--danger);  border-color:rgba(255,107,107,0.3); }
+  tr.cancelled td { opacity:0.5; text-decoration:line-through; }
+  tr.cancelled td:last-child { text-decoration:none; opacity:1; }
 
   .board-card { display:flex; gap:14px; align-items:flex-start; padding:13px 16px; border-radius:14px; border:1px solid var(--border); margin-bottom:8px; transition:border-color 120ms; }
   .board-card:hover { border-color:var(--border2); }
@@ -179,6 +191,19 @@ const BASE_STYLES = `
   .log-action { font-weight:600; font-size:0.85rem; }
   .log-detail { font-size:0.82rem; color:var(--muted); margin-top:3px; }
   .log-ts     { font-size:0.72rem; color:var(--muted); margin-top:4px; }
+
+  /* Activity log table */
+  .act-table { width:100%; border-collapse:collapse; }
+  .act-table th { text-align:left; font-size:0.74rem; font-weight:700; text-transform:uppercase; letter-spacing:0.05em; color:var(--muted); padding:10px 14px; border-bottom:1px solid var(--border2); white-space:nowrap; }
+  .act-table td { padding:10px 14px; border-bottom:1px solid var(--border); vertical-align:top; }
+  .act-table tr:last-child td { border-bottom:none; }
+  .act-table tr:hover td { background:rgba(128,128,128,0.04); }
+  .act-badge { display:inline-flex; align-items:center; gap:4px; padding:3px 9px; border-radius:6px; font-size:0.75rem; font-weight:600; white-space:nowrap; }
+  .act-badge-res { background:rgba(97,243,211,0.12); color:var(--accent); }
+  .act-badge-apt { background:rgba(143,124,255,0.12); color:var(--accent2); }
+  .act-badge-sys { background:rgba(255,217,112,0.12); color:var(--warn); }
+  .act-badge-usr { background:rgba(255,107,107,0.12); color:var(--danger); }
+  .act-change { font-size:0.76rem; color:var(--muted); background:rgba(128,128,128,0.06); border-radius:4px; padding:1px 6px; }
 
   .conflict-banner { background:rgba(255,107,107,0.10); border:1px solid rgba(255,107,107,0.28); border-radius:10px; padding:10px 14px; color:var(--danger); font-size:0.83rem; font-weight:500; margin-bottom:12px; }
 
@@ -200,6 +225,37 @@ const BASE_STYLES = `
   /* Capacity badge */
   .cap-badge { padding:4px 12px; border-radius:8px; border:1px solid var(--border2); font-size:0.82rem; font-weight:600; cursor:pointer; background:transparent; color:var(--ink); font-family:inherit; }
   .cap-badge:hover { border-color:var(--accent); color:var(--accent); }
+
+  /* Slot availability panel */
+  .slot-avail { border-radius:12px; padding:12px 14px; border:1px solid; transition:background 200ms, border-color 200ms; }
+  .slot-avail-title { font-size:0.75rem; font-weight:700; text-transform:uppercase; letter-spacing:0.07em; opacity:0.7; margin-bottom:6px; }
+  .slot-avail-row { display:flex; align-items:center; justify-content:space-between; margin-bottom:8px; gap:8px; }
+  .slot-avail-status { font-size:0.88rem; font-weight:700; }
+  .slot-avail-count { font-size:0.82rem; font-weight:500; opacity:0.8; }
+  .slot-avail-bar-track { height:7px; border-radius:99px; background:rgba(148,163,184,0.18); overflow:hidden; margin-bottom:8px; }
+  .slot-avail-bar-fill  { height:100%; border-radius:99px; transition:width 250ms ease; }
+  .slot-avail-chips { display:flex; flex-wrap:wrap; gap:4px; margin-top:6px; }
+  .slot-avail-chip { font-size:0.73rem; padding:2px 8px; border-radius:6px; background:rgba(148,163,184,0.10); }
+  .slot-avail-warning { margin-top:8px; padding:8px 10px; border-radius:8px; font-size:0.80rem; font-weight:600; display:flex; align-items:center; gap:6px; background:rgba(255,107,107,0.12); color:#ff6b6b; border:1px solid rgba(255,107,107,0.28); }
+  .slot-avail.sa-open   { background:rgba(61,214,181,0.07); border-color:rgba(61,214,181,0.28); color:#3dd6b5; }
+  .slot-avail.sa-busy   { background:rgba(255,154,60,0.08);  border-color:rgba(255,154,60,0.32);  color:#ff9a3c; }
+  .slot-avail.sa-full   { background:rgba(255,107,107,0.08); border-color:rgba(255,107,107,0.30); color:#ff6b6b; }
+
+  /* SMS compose */
+  .tpl-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(160px,1fr)); gap:8px; margin-bottom:16px; }
+  .tpl-btn { padding:10px 12px; border-radius:12px; border:1px solid var(--border2); background:transparent; color:var(--ink); cursor:pointer; font-family:inherit; font-size:0.82rem; text-align:left; transition:all 130ms; }
+  .tpl-btn:hover { border-color:var(--accent); color:var(--accent); background:rgba(97,243,211,0.06); }
+  .tpl-btn.active { border-color:var(--accent); background:rgba(97,243,211,0.10); color:var(--accent); }
+  .tpl-btn-icon { font-size:1.1rem; margin-bottom:4px; display:block; }
+  .msg-preview { padding:10px 14px; border-radius:10px; background:rgba(148,163,184,0.07); border:1px solid var(--border2); font-size:0.84rem; color:var(--muted); font-style:italic; line-height:1.5; white-space:pre-wrap; margin-top:4px; }
+  .token-chips { display:flex; flex-wrap:wrap; gap:4px; margin-top:6px; }
+  .token-chip { font-size:0.72rem; padding:2px 7px; border-radius:6px; border:1px dashed var(--border2); color:var(--muted); cursor:pointer; font-family:monospace; transition:all 100ms; }
+  .token-chip:hover { border-color:var(--accent); color:var(--accent); background:rgba(97,243,211,0.06); }
+  .recip-list { margin-top:12px; border:1px solid var(--border); border-radius:12px; overflow:hidden; }
+  .recip-row { display:flex; align-items:center; gap:12px; padding:9px 14px; border-bottom:1px solid var(--border); font-size:0.84rem; }
+  .recip-row:last-child { border-bottom:none; }
+  .recip-name { font-weight:600; flex:1; }
+  .recip-meta { color:var(--muted); font-size:0.78rem; }
 
   /* Login */
   .login-wrap { min-height:100vh; display:grid; place-items:center; }
@@ -255,7 +311,7 @@ const BASE_STYLES = `
     .form-grid, .form-grid-3 { grid-template-columns:1fr; }
     .form-full { grid-column:1; }
     .stat-value { font-size:1.7rem; }
-    .cal-grid { grid-template-columns:54px 1fr; }
+    .cal-grid { grid-template-columns:54px 76px 1fr; }
     .cal-staff-col { display:none; }
     table { font-size:0.80rem; }
     th, td { padding:7px 8px; }
@@ -296,8 +352,9 @@ function resSentence(r) {
     riders.push(`${r.childCount} child${r.childCount > 1 ? 'ren' : ''}${ages}`);
   }
   if (riders.length) parts.push(riders.join(', '));
-  if (r.durationMinutes) parts.push(`${r.durationMinutes}-min ${r.rideType || ''} ride`);
+  if (r.durationMinutes) parts.push(`${r.durationMinutes}-min ${r.rideType === 'Custom' && r.customRideType ? r.customRideType : (r.rideType || '')} ride`);
   if (r.depositAmount)   parts.push(`$${Number(r.depositAmount).toFixed(2)} deposit`);
+  if (r.discountAmount)  parts.push(`-$${Number(r.discountAmount).toFixed(2)} discount${r.discountReason ? ` (${r.discountReason})` : ''}`);
   if (r.cardType && r.cardLast4) parts.push(`${r.cardType} ···${r.cardLast4}`);
   if (r.specialRequests) parts.push(`Note: ${r.specialRequests}`);
   if (r.guideCount)      parts.push(`${r.guideCount} guide${r.guideCount > 1 ? 's' : ''}`);
@@ -388,13 +445,28 @@ function toast(msg, type = 'success') {
 // ─── Empty defaults ───────────────────────────────────────────────────────────
 const EMPTY_RES = {
   reservationDate:'', startTime:'09:00', durationMinutes:60,
-  rideType:'Group', firstName:'', lastName:'', phoneNumber:'',
+  rideType:'Group', customRideType:'', firstName:'', lastName:'', phoneNumber:'',
   adultCount:1, childCount:0, childAges:'',
-  depositAmount:'', cardType:'', cardLast4:'',
+  depositAmount:'', discountAmount:'', discountReason:'', cardType:'', cardLast4:'',
   specialRequests:'', notes:'', guideCount:1,
   bookedToCapacity:false, textConfirmationStatus:'Pending',
-  followUpStatus:'Pending', attendanceStatus:null,
+  followUpStatus:'Pending', attendanceStatus:null, status:'active',
 };
+
+const RIDE_COLORS = {
+  Group:      { bg:'rgba(97,243,211,0.09)',  border:'rgba(97,243,211,0.30)',  text:'#3dd6b5' },
+  Private:    { bg:'rgba(143,124,255,0.10)', border:'rgba(143,124,255,0.32)', text:'#a394ff' },
+  Sunset:     { bg:'rgba(255,160,60,0.10)',  border:'rgba(255,160,60,0.32)',  text:'#ff9a3c' },
+  Moonlight:  { bg:'rgba(80,140,255,0.10)',  border:'rgba(80,140,255,0.30)',  text:'#7ab2ff' },
+  Contract:   { bg:'rgba(92,230,154,0.10)',  border:'rgba(92,230,154,0.30)',  text:'#5ce69a' },
+  Stagecoach: { bg:'rgba(200,150,60,0.12)',  border:'rgba(200,150,60,0.30)',  text:'#c8963c' },
+  Hayride:    { bg:'rgba(255,210,60,0.10)',  border:'rgba(255,210,60,0.30)',  text:'#c8a000' },
+  Train:      { bg:'rgba(255,100,100,0.10)', border:'rgba(255,100,100,0.30)', text:'#ff6464' },
+  Custom:     { bg:'rgba(148,163,184,0.10)', border:'rgba(148,163,184,0.28)', text:'#8fa0b8' },
+  Kids:       { bg:'rgba(97,243,211,0.09)',  border:'rgba(97,243,211,0.30)',  text:'#3dd6b5' },
+  Pony:       { bg:'rgba(255,125,209,0.10)', border:'rgba(255,125,209,0.28)', text:'#ff7dd1' },
+};
+function rideStyle(type) { return RIDE_COLORS[type] || RIDE_COLORS.Group; }
 const EMPTY_APT = { title:'', owner:'', appointmentDate:today(), startTime:'09:00', endTime:'10:00', notes:'' };
 
 // ─── Login Screen ─────────────────────────────────────────────────────────────
@@ -442,16 +514,6 @@ function LoginScreen() {
           </div>
         </div>
         {err && <div className="login-error">{err}</div>}
-        <button className="login-btn-google" type="button" onClick={handleGoogle} disabled={busy}>
-          <svg width="18" height="18" viewBox="0 0 48 48" style={{marginRight:8,flexShrink:0}}>
-            <path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.08 17.74 9.5 24 9.5z"/>
-            <path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"/>
-            <path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"/>
-            <path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.18 1.48-4.97 2.35-8.16 2.35-6.26 0-11.57-3.59-13.46-8.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/>
-          </svg>
-          {busy ? 'Signing in…' : 'Sign in with Google'}
-        </button>
-        <div className="login-divider"><span>or</span></div>
         <form onSubmit={handleLogin}>
           <div className="login-field">
             <label>Email</label>
@@ -469,6 +531,61 @@ function LoginScreen() {
     </div>
   );
 }
+
+// ─── Modal wrapper component ─────────────────────────────────────────────────
+function Modal({ title, onClose, children }) {
+  return (
+    <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.55)', backdropFilter:'blur(4px)', zIndex:1000, display:'grid', placeItems:'center', padding:20 }}>
+      <div style={{ background:'var(--bg2)', borderRadius:20, padding:28, width:'100%', maxWidth:640, border:'1px solid var(--border2)', maxHeight:'90vh', overflowY:'auto' }}>
+        <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:20 }}>
+          <div style={{ fontWeight:700, fontSize:'1.05rem' }}>{title}</div>
+          <button onClick={onClose} style={{ background:'none', border:'none', cursor:'pointer', color:'var(--muted)', fontSize:'1.2rem' }}>✕</button>
+        </div>
+        {children}
+      </div>
+    </div>
+  );
+}
+
+// ── SMS message templates ─────────────────────────────────────────────────────
+const SMS_TEMPLATES = [
+  {
+    id: 'confirm',
+    label: 'Booking Confirmation',
+    icon: '✅',
+    body: 'Hi {firstName}! Your {rideType} ride is confirmed for {reservationDate} at {startTime} ({totalRiders} riders). Confirmation: {confirmationNumber}. See you soon — MacDonald\'s Ranch!',
+  },
+  {
+    id: 'reminder',
+    label: 'Day-Before Reminder',
+    icon: '🔔',
+    body: 'Hi {firstName}, just a friendly reminder — your {rideType} ride is tomorrow at {startTime}. Please arrive 15 min early. Questions? Call us! Conf#: {confirmationNumber}.',
+  },
+  {
+    id: 'weather',
+    label: 'Weather / Delay Notice',
+    icon: '⛅',
+    body: 'Hi {firstName}, heads-up: we\'re monitoring weather conditions for your ride on {reservationDate} at {startTime}. We\'ll reach out if anything changes. Thank you for your patience!',
+  },
+  {
+    id: 'cancelled',
+    label: 'Cancellation Notice',
+    icon: '❌',
+    body: 'Hi {firstName}, unfortunately your {rideType} ride on {reservationDate} at {startTime} (Conf# {confirmationNumber}) has been cancelled. Please contact us to reschedule. Sorry for the inconvenience.',
+  },
+  {
+    id: 'followup',
+    label: 'Post-Ride Follow-Up',
+    icon: '⭐',
+    body: 'Hi {firstName}, thank you for joining us for the {rideType} ride! We hope you had a wonderful time. We\'d love a review — and hope to see you again soon! – MacDonald\'s Ranch',
+  },
+  {
+    id: 'custom',
+    label: 'Custom Message',
+    icon: '✏️',
+    body: '',
+  },
+];
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // MAIN APP
@@ -530,18 +647,34 @@ export default function App() {
   const [showCapModal, setShowCapModal] = useState(false);
   const [capEdit,      setCapEdit]      = useState(20);
   const [capNotes,     setCapNotes]     = useState('');
+  const [overrideCap,  setOverrideCap]  = useState(false);
 
-  const [showInvite,   setShowInvite]   = useState(false);
-  const [inviteForm,   setInviteForm]   = useState({ email:'', password:'', role:'staff' });
-  const [resetLink,    setResetLink]    = useState(null); // { email, link }
+  const [showInvite,      setShowInvite]      = useState(false);
+  const [inviteForm,      setInviteForm]      = useState({ email:'', password:'', role:'staff' });
+  const [showChangePass,  setShowChangePass]  = useState(false);
+  const [changePassForm,  setChangePassForm]  = useState({ current:'', next:'', confirm:'' });
+  const [showSetPass,     setShowSetPass]     = useState(null);  // user object being edited
+  const [setPassVal,      setSetPassVal]      = useState('');
   const [users,        setUsers]        = useState([]);
 
   // ─ Messaging (SMS)
-  const [msgForm,      setMsgForm]      = useState({ recipientType:'date', date:today(), phone:'', message:'' });
+  const EMPTY_MSG = { recipientType:'date', date:today(), phone:'', time:'', timeFrom:'', timeTo:'', dateFrom:'', dateTo:'', message:'' };
+  const [msgForm,      setMsgForm]      = useState({ ...EMPTY_MSG });
   const [msgSending,   setMsgSending]   = useState(false);
+  const [showMsgModal, setShowMsgModal] = useState(false);   // quick-send from a reservation
+  const [msgModalRes,  setMsgModalRes]  = useState(null);    // the reservation being messaged
 
   // ─ Mobile sidebar
   const [sidebarOpen,  setSidebarOpen]  = useState(false);
+  const [showCancelled, setShowCancelled] = useState(false);
+
+  // ─ Activity log filters & view
+  const [actSearch,     setActSearch]     = useState('');
+  const [actActionType, setActActionType] = useState('All Actions');
+  const [actDateFrom,   setActDateFrom]   = useState('');
+  const [actDateTo,     setActDateTo]     = useState('');
+  const [actViewMode,   setActViewMode]   = useState('table');   // 'table' | 'feed'
+  const [actCategory,   setActCategory]   = useState('all');    // 'all' | 'reservations' | 'appointments' | 'system' | 'users'
 
   const isAdmin = userRole === 'admin';
   const isStaff = userRole === 'staff' || userRole === 'admin';
@@ -594,19 +727,39 @@ export default function App() {
 
   // ── Derived data ──────────────────────────────────────────────────────────────
   const todayStr = today();
-  const todayRes = reservations.filter(r => r.reservationDate === todayStr);
+  const todayRes = reservations.filter(r => r.reservationDate === todayStr && r.status !== 'cancelled');
   const todayRiders = todayRes.reduce((s, r) => s + (r.totalRiders || 0), 0);
-  const calRes = reservations.filter(r => r.reservationDate === calDate)
+  const calRes = reservations.filter(r => r.reservationDate === calDate && r.status !== 'cancelled')
                              .sort((a,b) => (a.startTime||'').localeCompare(b.startTime||''));
   const calApt = appointments.filter(a => a.appointmentDate === calDate)
                              .sort((a,b) => (a.startTime||'').localeCompare(b.startTime||''));
   const maxRiders = capacity?.maxRiders ?? 20;
 
+  // ── Slot availability (reactive to resForm fields) ────────────────────────────
+  const slotRes = (resForm.reservationDate && resForm.startTime)
+    ? reservations.filter(r =>
+        r.reservationDate === resForm.reservationDate &&
+        r.startTime       === resForm.startTime &&
+        r.status !== 'cancelled' &&
+        r.id !== editingResId
+      )
+    : [];
+  const slotBooked    = slotRes.reduce((s, r) => s + (r.totalRiders || 0), 0);
+  const formRiders    = Number(resForm.adultCount || 0) + Number(resForm.childCount || 0);
+  const slotProjected = slotBooked + formRiders;
+  const slotFillPct   = Math.min(100, Math.round(slotBooked    / maxRiders * 100));
+  const slotProjPct   = Math.min(100, Math.round(slotProjected / maxRiders * 100));
+  const slotLevel     = slotProjected > maxRiders ? 'sa-full' : slotProjected >= maxRiders * 0.75 ? 'sa-busy' : 'sa-open';
+  const slotBarColor  = slotLevel === 'sa-open' ? '#3dd6b5' : slotLevel === 'sa-busy' ? '#ff9a3c' : '#ff6b6b';
+  const slotStatusTxt = slotLevel === 'sa-full' ? `⚠ Over capacity` : slotLevel === 'sa-busy' ? '⚡ Filling up' : '✓ Available';
+
   const filteredRes = reservations.filter(r => {
+    if (!showCancelled && r.status === 'cancelled') return false;
     const q = search.toLowerCase();
     return !q || [r.firstName, r.lastName, r.phoneNumber, r.confirmationNumber, r.rideType]
       .some(v => v?.toLowerCase().includes(q));
   });
+  const cancelledCount = reservations.filter(r => r.status === 'cancelled').length;
 
   // ── Conflict detection ────────────────────────────────────────────────────────
   const conflicts = [];
@@ -625,11 +778,13 @@ export default function App() {
   function openNewRes(prefillDate) {
     setEditingResId(null);
     setResForm({ ...EMPTY_RES, reservationDate: prefillDate || today() });
+    setOverrideCap(false);
     setShowResForm(true);
   }
   function openEditRes(r) {
     setEditingResId(r.id);
     setResForm({ ...r });
+    setOverrideCap(false);
     setShowResForm(true);
   }
   async function submitRes(e) {
@@ -640,6 +795,7 @@ export default function App() {
       childCount:      Number(resForm.childCount    || 0),
       durationMinutes: Number(resForm.durationMinutes || 60),
       depositAmount:   Number(resForm.depositAmount || 0),
+      discountAmount:  Number(resForm.discountAmount || 0),
       guideCount:      Number(resForm.guideCount    || 1),
     };
     try {
@@ -718,16 +874,52 @@ export default function App() {
     } catch (err) { toast(err.message, 'error'); }
   }
 
-  // ── User invite ───────────────────────────────────────────────────────────────
+  // ── User management ───────────────────────────────────────────────────────────
   async function submitInvite(e) {
     e.preventDefault();
+    if (!inviteForm.password || inviteForm.password.length < 6)
+      return toast('Password must be at least 6 characters', 'error');
     try {
       await api.inviteUser(inviteForm);
-      toast(`${inviteForm.email} invited as ${inviteForm.role}`);
+      toast(`${inviteForm.email} added as ${inviteForm.role}`);
       setShowInvite(false);
       setInviteForm({ email:'', password:'', role:'staff' });
       api.listUsers().then(setUsers).catch(() => {});
     } catch (err) { toast(err.message, 'error'); }
+  }
+
+  async function submitSetPass(e) {
+    e.preventDefault();
+    if (!setPassVal || setPassVal.length < 6)
+      return toast('Password must be at least 6 characters', 'error');
+    try {
+      await api.setUserPassword(showSetPass.id, setPassVal);
+      toast(`Password updated for ${showSetPass.email}`);
+      setShowSetPass(null);
+      setSetPassVal('');
+    } catch (err) { toast(err.message, 'error'); }
+  }
+
+  async function submitChangePass(e) {
+    e.preventDefault();
+    if (changePassForm.next !== changePassForm.confirm)
+      return toast('New passwords do not match', 'error');
+    if (changePassForm.next.length < 6)
+      return toast('Password must be at least 6 characters', 'error');
+    try {
+      // Re-authenticate first (Firebase requires recent login for password change)
+      const credential = EmailAuthProvider.credential(fireUser.email, changePassForm.current);
+      await reauthenticateWithCredential(fireUser, credential);
+      await updatePassword(fireUser, changePassForm.next);
+      toast('Password changed successfully');
+      setShowChangePass(false);
+      setChangePassForm({ current:'', next:'', confirm:'' });
+    } catch (err) {
+      const msg = err.code === 'auth/wrong-password' || err.code === 'auth/invalid-credential'
+        ? 'Current password is incorrect'
+        : err.message;
+      toast(msg, 'error');
+    }
   }
 
   async function toggleUserDisabled(u) {
@@ -744,41 +936,33 @@ export default function App() {
     } catch(err) { toast(err.message, 'error'); }
   }
 
-  async function handleResetPassword(u) {
-    try {
-      const res = await api.resetUserPassword(u.id);
-      setResetLink({ email: res.email, link: res.link });
-    } catch(err) { toast(err.message, 'error'); }
-  }
-
   // ── SMS send handler ──────────────────────────────────────────────────
-  async function submitMsg(e) {
-    e.preventDefault();
+  async function submitMsg(e, overrideBody) {
+    if (e) e.preventDefault();
     setMsgSending(true);
     try {
-      const body = { message: msgForm.message };
-      if (msgForm.recipientType === 'date')  body.date = msgForm.date;
-      if (msgForm.recipientType === 'phone') body.to   = msgForm.phone;
+      const f = overrideBody || msgForm;
+      const body = { message: f.message };
+      if (f.recipientType === 'date')       { body.date = f.date; }
+      if (f.recipientType === 'time')       { body.date = f.date; body.time = f.time; }
+      if (f.recipientType === 'timerange')  { body.date = f.date; body.time_from = f.timeFrom; body.time_to = f.timeTo; }
+      if (f.recipientType === 'daterange')  { body.date_from = f.dateFrom; body.date_to = f.dateTo; }
+      if (f.recipientType === 'phone')      { body.to = f.phone; }
+      if (f.recipientType === 'reservation'){ body.reservation_id = f.reservationId; }
       const r = await api.sendSms(body);
-      toast(`✅ Sent ${r.sent} message${r.sent !== 1 ? 's' : ''}`);
-      setMsgForm(f => ({ ...f, message: '' }));
+      const detail = r.skipped > 0 ? ` (${r.skipped} duplicate${r.skipped!==1?'s':''} skipped)` : '';
+      if (r.failed > 0) toast(`⚠ Sent ${r.sent}, failed ${r.failed}${detail}`, 'error');
+      else toast(`✅ Sent ${r.sent} message${r.sent !== 1 ? 's' : ''}${detail}`);
+      if (!overrideBody) setMsgForm(f2 => ({ ...f2, message: '' }));
+      else { setShowMsgModal(false); setMsgModalRes(null); }
     } catch(err) { toast(err.message, 'error'); }
     finally { setMsgSending(false); }
   }
 
-  // ── Modal wrapper component ───────────────────────────────────────────────────
-  function Modal({ title, onClose, children }) {
-    return (
-      <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.55)', backdropFilter:'blur(4px)', zIndex:1000, display:'grid', placeItems:'center', padding:20 }}>
-        <div style={{ background:'var(--bg2)', borderRadius:20, padding:28, width:'100%', maxWidth:640, border:'1px solid var(--border2)', maxHeight:'90vh', overflowY:'auto' }}>
-          <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:20 }}>
-            <div style={{ fontWeight:700, fontSize:'1.05rem' }}>{title}</div>
-            <button onClick={onClose} style={{ background:'none', border:'none', cursor:'pointer', color:'var(--muted)', fontSize:'1.2rem' }}>✕</button>
-          </div>
-          {children}
-        </div>
-      </div>
-    );
+  // ── Quick-send from a reservation ─────────────────────────────────────
+  function openMsgForRes(r) {
+    setMsgModalRes(r);
+    setShowMsgModal(true);
   }
 
   // ── Attendance badge label ────────────────────────────────────────────────────
@@ -812,27 +996,72 @@ export default function App() {
               <Field label="Phone"><input value={resForm.phoneNumber} onChange={e => setResForm({...resForm, phoneNumber:e.target.value})} /></Field>
               <Field label="Ride Type">
                 <select value={resForm.rideType} onChange={e => setResForm({...resForm, rideType:e.target.value})}>
-                  {['Group','Private','Kids','Pony','Custom'].map(r => <option key={r}>{r}</option>)}
+                  {['Group','Private','Sunset','Moonlight','Contract','Stagecoach','Hayride','Train','Custom'].map(r => <option key={r}>{r}</option>)}
                 </select>
               </Field>
+              {resForm.rideType === 'Custom' && (
+                <Field label="Custom Ride Description" full>
+                  <input value={resForm.customRideType} placeholder="Describe the ride type…" onChange={e => setResForm({...resForm, customRideType:e.target.value})} />
+                </Field>
+              )}
               <Field label="Date"><input type="date" required value={resForm.reservationDate} onChange={e => setResForm({...resForm, reservationDate:e.target.value})} /></Field>
               <Field label="Start Time">
                 <select value={resForm.startTime} onChange={e => setResForm({...resForm, startTime:e.target.value})}>
                   {TIME_SLOTS.map(t => <option key={t} value={t}>{fmtTime(t)}</option>)}
                 </select>
               </Field>
+
+              {/* ── Slot availability panel ── */}
+              {resForm.reservationDate && resForm.startTime && (
+                <div className={`slot-avail ${slotLevel}`} style={{gridColumn:'1/-1'}}>
+                  <div className="slot-avail-title">Slot Availability</div>
+                  <div className="slot-avail-row">
+                    <span className="slot-avail-status">
+                      {slotStatusTxt} — {fmtTime(resForm.startTime)}, {fmtDate(resForm.reservationDate)}
+                    </span>
+                    <span className="slot-avail-count">
+                      {slotProjected} / {maxRiders} riders{formRiders > 0 && slotBooked > 0 ? ` (${slotBooked} existing + ${formRiders} this booking)` : formRiders > 0 ? ` (${formRiders} this booking)` : ''}
+                    </span>
+                  </div>
+                  <div className="slot-avail-bar-track">
+                    <div className="slot-avail-bar-fill" style={{width:`${slotProjPct}%`, background:slotBarColor}} />
+                  </div>
+                  {slotRes.length > 0 ? (
+                    <div>
+                      <div style={{fontSize:'0.76rem', opacity:0.7, marginBottom:4}}>Already booked at this time:</div>
+                      <div className="slot-avail-chips">
+                        {slotRes.map(r => (
+                          <span key={r.id} className="slot-avail-chip" style={{color:'var(--muted)'}}>
+                            {r.firstName} {r.lastName} · {r.rideType} · {r.totalRiders} rider{r.totalRiders !== 1 ? 's' : ''}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  ) : (
+                    <div style={{fontSize:'0.78rem', opacity:0.65}}>No other bookings at this time — slot is open.</div>
+                  )}
+                  {slotProjected > maxRiders && (
+                    <div className="slot-avail-warning">
+                      ⚠️ This booking would exceed the {maxRiders}-rider daily capacity by {slotProjected - maxRiders}.
+                      Check the box below to save anyway.
+                    </div>
+                  )}
+                </div>
+              )}
               <Field label="Duration (min)">
                 <select value={resForm.durationMinutes} onChange={e => setResForm({...resForm, durationMinutes:Number(e.target.value)})}>
-                  {[30,45,60,90,120].map(d => <option key={d} value={d}>{d} min</option>)}
+                  {[15,30,45,60,90,120].map(d => <option key={d} value={d}>{d} min</option>)}
                 </select>
               </Field>
               <Field label="Adults"><input type="number" min={0} value={resForm.adultCount} onChange={e => setResForm({...resForm, adultCount:Number(e.target.value)})} /></Field>
               <Field label="Children"><input type="number" min={0} value={resForm.childCount} onChange={e => setResForm({...resForm, childCount:Number(e.target.value)})} /></Field>
               <Field label="Child Ages"><input value={resForm.childAges} placeholder="e.g. 6, 8, 10" onChange={e => setResForm({...resForm, childAges:e.target.value})} /></Field>
               <Field label="Deposit ($)"><input type="number" min={0} step="0.01" value={resForm.depositAmount} onChange={e => setResForm({...resForm, depositAmount:e.target.value})} /></Field>
+              <Field label="Discount ($)"><input type="number" min={0} step="0.01" value={resForm.discountAmount} placeholder="0.00" onChange={e => setResForm({...resForm, discountAmount:e.target.value})} /></Field>
+              <Field label="Discount Reason"><input value={resForm.discountReason} placeholder="e.g. Birthday, Returning guest…" onChange={e => setResForm({...resForm, discountReason:e.target.value})} /></Field>
               <Field label="Card Type">
                 <select value={resForm.cardType} onChange={e => setResForm({...resForm, cardType:e.target.value})}>
-                  {['','Visa','Mastercard','Amex','Discover','Cash','Check'].map(c => <option key={c} value={c}>{c||'—'}</option>)}
+                  {['','Visa','Mastercard','Amex','Discover','Cash','Check','Pay in Full','Comped'].map(c => <option key={c} value={c}>{c||'—'}</option>)}
                 </select>
               </Field>
               <Field label="Card Last 4"><input maxLength={4} value={resForm.cardLast4} onChange={e => setResForm({...resForm, cardLast4:e.target.value})} /></Field>
@@ -850,9 +1079,21 @@ export default function App() {
               <Field label="Special Requests" full><textarea value={resForm.specialRequests} onChange={e => setResForm({...resForm, specialRequests:e.target.value})} /></Field>
               <Field label="Internal Notes" full><textarea value={resForm.notes} onChange={e => setResForm({...resForm, notes:e.target.value})} /></Field>
             </div>
-            <div style={{marginTop:20, display:'flex', gap:10}}>
-              <Btn type="submit" variant="primary">{editingResId ? 'Save Changes' : 'Create Reservation'}</Btn>
-              <Btn onClick={() => setShowResForm(false)}>Cancel</Btn>
+            <div style={{marginTop:20}}>
+              {slotProjected > maxRiders && (
+                <label style={{display:'flex', alignItems:'center', gap:8, fontSize:'0.83rem', color:'#ff6b6b', fontWeight:600, marginBottom:12, cursor:'pointer'}}>
+                  <input type="checkbox" checked={overrideCap} onChange={e => setOverrideCap(e.target.checked)}
+                    style={{width:15, height:15, accentColor:'#ff6b6b'}} />
+                  I understand this exceeds capacity — save anyway
+                </label>
+              )}
+              <div style={{display:'flex', gap:10}}>
+                <Btn type="submit" variant="primary"
+                  disabled={slotProjected > maxRiders && !overrideCap}>
+                  {editingResId ? 'Save Changes' : 'Create Reservation'}
+                </Btn>
+                <Btn onClick={() => { setShowResForm(false); setOverrideCap(false); }}>Cancel</Btn>
+              </div>
             </div>
           </form>
         </Modal>
@@ -904,13 +1145,13 @@ export default function App() {
         </Modal>
       )}
 
-      {/* Invite user modal */}
+      {/* Add staff user modal */}
       {showInvite && (
-        <Modal title="Invite User" onClose={() => setShowInvite(false)}>
+        <Modal title="Add Staff User" onClose={() => setShowInvite(false)}>
           <form onSubmit={submitInvite}>
             <div className="form-grid">
-              <Field label="Email" full><input type="email" required value={inviteForm.email} onChange={e => setInviteForm({...inviteForm, email:e.target.value})} /></Field>
-              <Field label="Temp Password"><input type="text" required value={inviteForm.password} onChange={e => setInviteForm({...inviteForm, password:e.target.value})} placeholder="They can change this later" /></Field>
+              <Field label="Email" full><input type="email" required autoComplete="off" value={inviteForm.email} onChange={e => setInviteForm({...inviteForm, email:e.target.value})} /></Field>
+              <Field label="Password"><input type="password" required minLength={6} autoComplete="new-password" value={inviteForm.password} placeholder="Min. 6 characters" onChange={e => setInviteForm({...inviteForm, password:e.target.value})} /></Field>
               <Field label="Role">
                 <select value={inviteForm.role} onChange={e => setInviteForm({...inviteForm, role:e.target.value})}>
                   <option value="staff">Staff</option>
@@ -919,29 +1160,129 @@ export default function App() {
                 </select>
               </Field>
             </div>
-            <div style={{marginTop:20, display:'flex', gap:10}}>
-              <Btn type="submit" variant="primary">Send Invite</Btn>
+            <p style={{fontSize:'0.80rem', color:'var(--muted)', marginTop:10, marginBottom:0}}>The user can log in immediately with this email and password, and change their password any time after logging in.</p>
+            <div style={{marginTop:16, display:'flex', gap:10}}>
+              <Btn type="submit" variant="primary">Create Account</Btn>
               <Btn onClick={() => setShowInvite(false)}>Cancel</Btn>
             </div>
           </form>
         </Modal>
       )}
 
-      {/* Reset password link modal */}
-      {resetLink && (
-        <Modal title="Password Reset Link" onClose={() => setResetLink(null)}>
-          <p style={{fontSize:'0.88rem', color:'var(--muted)', marginBottom:14}}>
-            Share this one-time link with <strong style={{color:'var(--ink)'}}>{resetLink.email}</strong> so they can set a new password. It expires in 1 hour.
-          </p>
-          <div style={{background:'var(--bg)', border:'1px solid var(--border2)', borderRadius:10, padding:'10px 14px', wordBreak:'break-all', fontSize:'0.82rem', fontFamily:'monospace', color:'var(--ink)'}}>
-            {resetLink.link}
-          </div>
-          <div style={{marginTop:16, display:'flex', gap:10}}>
-            <Btn variant="primary" onClick={() => { navigator.clipboard.writeText(resetLink.link); toast('Link copied!'); }}>Copy Link</Btn>
-            <Btn onClick={() => setResetLink(null)}>Close</Btn>
-          </div>
+      {/* Admin: set password for another user */}
+      {showSetPass && (
+        <Modal title={`Set Password — ${showSetPass.email}`} onClose={() => { setShowSetPass(null); setSetPassVal(''); }}>
+          <form onSubmit={submitSetPass}>
+            <Field label="New Password">
+              <input type="password" required minLength={6} autoComplete="new-password" value={setPassVal} placeholder="Min. 6 characters" onChange={e => setSetPassVal(e.target.value)} />
+            </Field>
+            <p style={{fontSize:'0.80rem', color:'var(--muted)', marginTop:10, marginBottom:0}}>The user can log in with this new password immediately.</p>
+            <div style={{marginTop:16, display:'flex', gap:10}}>
+              <Btn type="submit" variant="primary">Set Password</Btn>
+              <Btn onClick={() => { setShowSetPass(null); setSetPassVal(''); }}>Cancel</Btn>
+            </div>
+          </form>
         </Modal>
       )}
+
+      {/* Current user: change own password */}
+      {showChangePass && (
+        <Modal title="Change My Password" onClose={() => { setShowChangePass(false); setChangePassForm({ current:'', next:'', confirm:'' }); }}>
+          <form onSubmit={submitChangePass}>
+            <div className="form-grid">
+              <Field label="Current Password" full><input type="password" required autoComplete="current-password" value={changePassForm.current} onChange={e => setChangePassForm({...changePassForm, current:e.target.value})} /></Field>
+              <Field label="New Password"><input type="password" required minLength={6} autoComplete="new-password" value={changePassForm.next} placeholder="Min. 6 characters" onChange={e => setChangePassForm({...changePassForm, next:e.target.value})} /></Field>
+              <Field label="Confirm New Password"><input type="password" required minLength={6} autoComplete="new-password" value={changePassForm.confirm} onChange={e => setChangePassForm({...changePassForm, confirm:e.target.value})} /></Field>
+            </div>
+            <div style={{marginTop:16, display:'flex', gap:10}}>
+              <Btn type="submit" variant="primary">Change Password</Btn>
+              <Btn onClick={() => { setShowChangePass(false); setChangePassForm({ current:'', next:'', confirm:'' }); }}>Cancel</Btn>
+            </div>
+          </form>
+        </Modal>
+      )}
+
+      {/* Quick-send from a reservation */}
+      {showMsgModal && msgModalRes && (() => {
+        const r = msgModalRes;
+        const [qTpl, setQTpl] = React.useState('');
+        const [qMsg, setQMsg] = React.useState('');
+        function qResolve(text) {
+          const fields = {firstName:'', lastName:'', phoneNumber:'', confirmationNumber:'', rideType:'',
+            reservationDate:'', startTime:'', durationMinutes:'', adultCount:'', childCount:'',
+            totalRiders:'', specialRequests:''};
+          return Object.keys(fields).reduce(
+            (s, k) => s.replace(new RegExp(`\\{${k}\\}`, 'g'), r[k] ?? ''), text
+          );
+        }
+        async function sendQuick(e) {
+          e.preventDefault();
+          if (!qMsg.trim()) return;
+          setMsgSending(true);
+          try {
+            const text = qResolve(qMsg);
+            const res = await api.sendSms({ message: text, reservation_id: r.id });
+            if (res.failed > 0) toast(`⚠ Failed to send`, 'error');
+            else toast(`✅ Message sent to ${r.firstName} ${r.lastName}`);
+            setShowMsgModal(false);
+            setMsgModalRes(null);
+          } catch(err) { toast(err.message, 'error'); }
+          finally { setMsgSending(false); }
+        }
+        return (
+          <Modal title={`📲 Send Message — ${r.firstName} ${r.lastName}`}
+                 onClose={() => { setShowMsgModal(false); setMsgModalRes(null); }}>
+            <div style={{marginBottom:12, fontSize:'0.85rem', color:'var(--muted)'}}>
+              <strong>📞</strong> {r.phoneNumber || <span style={{color:'var(--danger)'}}>No phone number</span>}
+              &nbsp;·&nbsp; {fmtTime(r.startTime)} on {fmtDate(r.reservationDate)} &nbsp;·&nbsp; {r.rideType}
+            </div>
+
+            {/* Template picker */}
+            <div style={{marginBottom:12}}>
+              <div style={{fontSize:'0.75rem', color:'var(--muted)', marginBottom:6, fontWeight:600, textTransform:'uppercase', letterSpacing:'0.06em'}}>Template</div>
+              <div style={{display:'flex', flexWrap:'wrap', gap:6}}>
+                {SMS_TEMPLATES.map(t => (
+                  <button key={t.id} type="button"
+                    style={{padding:'5px 12px', borderRadius:8, border:'1px solid var(--border2)',
+                      background: qTpl === t.id ? 'rgba(97,243,211,0.10)' : 'transparent',
+                      borderColor: qTpl === t.id ? 'var(--accent)' : 'var(--border2)',
+                      color: qTpl === t.id ? 'var(--accent)' : 'var(--ink)',
+                      cursor:'pointer', fontFamily:'inherit', fontSize:'0.80rem'}}
+                    onClick={() => {
+                      setQTpl(t.id);
+                      setQMsg(t.id === 'custom' ? '' : t.body);
+                    }}>
+                    {t.icon} {t.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <form onSubmit={sendQuick}>
+              <Field label={`Message${qMsg ? ` (${qMsg.length} chars)` : ''}`} full>
+                <textarea rows={5} required value={qMsg} placeholder="Pick a template or type a message…"
+                  onChange={e => setQMsg(e.target.value)} />
+              </Field>
+
+              {/* Live preview */}
+              {qMsg && (
+                <Field label="Preview (with this guest's data)" full>
+                  <div className="msg-preview">{qResolve(qMsg)}</div>
+                </Field>
+              )}
+
+              <div style={{marginTop:16, display:'flex', gap:10}}>
+                <Btn type="submit" variant="primary" disabled={msgSending || !qMsg.trim() || !r.phoneNumber}>
+                  {msgSending ? 'Sending…' : '📲 Send'}
+                </Btn>
+                <Btn type="button" onClick={() => { setShowMsgModal(false); setMsgModalRes(null); }}>
+                  Cancel
+                </Btn>
+              </div>
+            </form>
+          </Modal>
+        );
+      })()}
 
       {/* Shell */}
       <div className="shell">
@@ -985,6 +1326,12 @@ export default function App() {
           <div style={{padding:'4px 12px', display:'flex', flexDirection:'column', gap:6}}>
             <button className="theme-toggle" onClick={() => setDarkMode(d => !d)}>
               {darkMode ? '☀ Light mode' : '☽ Dark mode'}
+            </button>
+            <button
+              onClick={() => setShowChangePass(true)}
+              style={{padding:'8px 12px', background:'transparent', border:'1px solid var(--border2)', borderRadius:6, color:'var(--muted)', cursor:'pointer', fontSize:12, textAlign:'left', fontFamily:'inherit'}}
+            >
+              🔑 Change Password
             </button>
             <button
               onClick={() => signOut(firebaseAuth)}
@@ -1037,13 +1384,15 @@ export default function App() {
                 <Card title="Today's Reservations" action={<Btn variant="ghost" size="sm" onClick={() => openNewRes(todayStr)}>+ New</Btn>}>
                   {todayRes.length === 0 ? <div className="empty-state">No reservations today</div> :
                     todayRes.map(r => (
-                      <div key={r.id} className="board-card">
+                      <div key={r.id} className="board-card" style={{borderLeft:`3px solid ${rideStyle(r.rideType).border}`}}>
                         <div className="board-time">{fmtTime(r.startTime)}</div>
                         <div className="board-body">
                           <div className="board-title">{r.firstName} {r.lastName}</div>
                           <div className="board-sentence">{resSentence(r)}</div>
                         </div>
-                        <Badge color={r.rideType === 'Private' ? 'purple' : 'teal'}>{r.rideType}</Badge>
+                        <span className="badge" style={{background:rideStyle(r.rideType).bg, borderColor:rideStyle(r.rideType).border, color:rideStyle(r.rideType).text, border:'1px solid'}}>
+                          {r.rideType}{r.rideType === 'Custom' && r.customRideType ? `: ${r.customRideType}` : ''}
+                        </span>
                       </div>
                     ))
                   }
@@ -1075,6 +1424,11 @@ export default function App() {
                   <input className="field input" placeholder="Search name, phone, confirmation…" value={search} onChange={e => setSearch(e.target.value)} style={{background:'var(--card)', border:'1px solid var(--border2)', borderRadius:10, padding:'9px 12px 9px 32px', color:'var(--ink)', width:'100%', fontFamily:'inherit', outline:'none'}} />
                 </div>
                 <span className="count-pill">{filteredRes.length} results</span>
+                {cancelledCount > 0 && (
+                  <button onClick={() => setShowCancelled(v => !v)} style={{background:'transparent', border:'1px solid var(--border2)', borderRadius:8, padding:'5px 12px', fontSize:'0.78rem', cursor:'pointer', color: showCancelled ? 'var(--danger)' : 'var(--muted)', fontFamily:'inherit'}}>
+                    {showCancelled ? '✕ Hide Cancelled' : `Show Cancelled (${cancelledCount})`}
+                  </button>
+                )}
               </div>
               <Card>
                 <div className="tbl-wrap">
@@ -1095,23 +1449,30 @@ export default function App() {
                     <tbody>
                       {filteredRes.length === 0 && <tr><td colSpan={9} className="empty-state">No reservations found</td></tr>}
                       {filteredRes.map(r => (
-                        <tr key={r.id}>
+                        <tr key={r.id} className={r.status === 'cancelled' ? 'cancelled' : ''}>
                           <td><Badge color="teal">{r.confirmationNumber}</Badge></td>
                           <td className="td-name"><strong>{r.firstName} {r.lastName}</strong><small>{r.phoneNumber}</small></td>
                           <td>{fmtDate(r.reservationDate)}</td>
                           <td>{fmtTime(r.startTime)}</td>
                           <td>{r.totalRiders}</td>
-                          <td><Badge color={r.rideType==='Private'?'purple':'teal'}>{r.rideType}</Badge></td>
                           <td>
-                            <button className={`attendance-btn ${r.attendanceStatus||''}`} onClick={() => cycleAttendance(r)}>
-                              {attendanceLabel(r.attendanceStatus)}
-                            </button>
+                            <span className="badge" style={{background:rideStyle(r.rideType).bg, borderColor:rideStyle(r.rideType).border, color:rideStyle(r.rideType).text, border:'1px solid'}}>
+                              {r.rideType}{r.rideType === 'Custom' && r.customRideType ? `: ${r.customRideType}` : ''}
+                            </span>
+                          </td>
+                          <td>
+                            {r.status !== 'cancelled' ? (
+                              <button className={`attendance-btn ${r.attendanceStatus||''}`} onClick={() => cycleAttendance(r)}>
+                                {attendanceLabel(r.attendanceStatus)}
+                              </button>
+                            ) : <span style={{fontSize:'0.75rem', color:'var(--danger)', fontWeight:600}}>Cancelled</span>}
                           </td>
                           <td style={{maxWidth:280, fontSize:'0.77rem', color:'var(--muted)'}}>{resSentence(r)}</td>
                           <td>
                             <div className="td-actions">
-                              <Btn variant="ghost" size="sm" onClick={() => openEditRes(r)}>Edit</Btn>
-                              {isAdmin && <Btn variant="danger" size="sm" onClick={() => deleteRes(r.id)}>Cancel</Btn>}
+                              {r.status !== 'cancelled' && <Btn variant="ghost" size="sm" onClick={() => openEditRes(r)}>Edit</Btn>}
+                              {r.phoneNumber && <Btn variant="ghost" size="sm" onClick={() => { setMsgModalRes(r); setShowMsgModal(true); }}>📲</Btn>}
+                              {isAdmin && r.status !== 'cancelled' && <Btn variant="danger" size="sm" onClick={() => deleteRes(r.id)}>Cancel</Btn>}
                             </div>
                           </td>
                         </tr>
@@ -1177,9 +1538,25 @@ export default function App() {
                 <Btn variant="ghost" size="sm" onClick={() => openNewApt(calDate)}>+ Staff Appt</Btn>
               </div>
 
+              {/* Day totals summary bar */}
+              {calRes.length > 0 && (() => {
+                const dayAdults   = calRes.reduce((s, r) => s + (r.adultCount  || 0), 0);
+                const dayChildren = calRes.reduce((s, r) => s + (r.childCount  || 0), 0);
+                return (
+                  <div className="day-totals-bar">
+                    <span><span className="dtb-label">Day total —</span></span>
+                    <span><span className="dtb-label">Adults:</span><span className="dtb-a"> {dayAdults}</span></span>
+                    <span><span className="dtb-label">Children:</span><span className="dtb-c"> {dayChildren}</span></span>
+                    <span><span className="dtb-label">Riders:</span><span className="dtb-t"> {dayAdults + dayChildren}</span></span>
+                    <span style={{color:'var(--muted)', fontSize:'0.78rem'}}>across {calRes.length} reservation{calRes.length !== 1 ? 's' : ''}</span>
+                  </div>
+                );
+              })()}
+
               {/* Time-slot grid — matches the paper copy layout */}
               <div className="cal-grid">
                           <div className="cal-header">Time</div>
+                <div className="cal-header">Totals</div>
                 <div className="cal-header">Reservations</div>
                 <div className="cal-header cal-staff-col">Staff / Notes</div>
 
@@ -1187,17 +1564,32 @@ export default function App() {
                   const slotRes = calRes.filter(r => r.startTime === slot);
                   const slotApt = calApt.filter(a => a.startTime === slot);
                   if (slotRes.length === 0 && slotApt.length === 0) return null;
+                  const totalAdults   = slotRes.reduce((s, r) => s + (r.adultCount  || 0), 0);
+                  const totalChildren = slotRes.reduce((s, r) => s + (r.childCount  || 0), 0);
                   return (
                     <React.Fragment key={slot}>
                       <div className="cal-time">{fmtTime(slot)}</div>
+                      <div className="cal-totals-col">
+                        {slotRes.length > 0 && <>
+                          <span className="tot-chip tot-a"><span className="tot-num">{totalAdults}</span> adults</span>
+                          <span className="tot-chip tot-c"><span className="tot-num">{totalChildren}</span> children</span>
+                        </>}
+                      </div>
                       <div className="cal-cell">
                         {slotRes.map(r => (
-                          <div key={r.id} className={`cal-res-pill${r.bookedToCapacity?' booked':''}`}>
+                          <div key={r.id} className={`cal-res-pill${r.bookedToCapacity?' booked':''}`}
+                            style={{background:rideStyle(r.rideType).bg, borderColor:rideStyle(r.rideType).border}}>
                             <strong>{r.firstName} {r.lastName}</strong>
+                            <span style={{marginLeft:6, fontSize:'0.70rem', fontWeight:600, color:rideStyle(r.rideType).text}}>{r.rideType}{r.rideType==='Custom'&&r.customRideType?`: ${r.customRideType}`:''}</span>
                             <div className="cal-res-sentence">{resSentence(r)}</div>
                             <button className={`attendance-btn ${r.attendanceStatus||''}`} onClick={() => cycleAttendance(r)}>
                               {attendanceLabel(r.attendanceStatus)}
                             </button>
+                            {r.phoneNumber && (
+                              <button style={{marginLeft:6, fontSize:'0.72rem', background:'transparent', border:'none', cursor:'pointer', color:'var(--accent)', padding:'2px 4px'}}
+                                onClick={() => { setMsgModalRes(r); setShowMsgModal(true); }}
+                                title={`Send message to ${r.firstName}`}>📲</button>
+                            )}
                           </div>
                         ))}
                       </div>
@@ -1225,91 +1617,290 @@ export default function App() {
           )}
 
           {/* ── MESSAGES ── */}
-          {view === 'messages' && (
-            <>
-              <div className="page-title">
-                📲 Messages
-                <span>Send SMS to guests via Twilio</span>
-              </div>
+          {view === 'messages' && (() => {
+            // ── helpers ──────────────────────────────────────────────────────
+            function resolvePreview(text, r) {
+              if (!r) return text;
+              const fields = {firstName:'', lastName:'', phoneNumber:'', confirmationNumber:'', rideType:'',
+                reservationDate:'', startTime:'', durationMinutes:'', adultCount:'', childCount:'',
+                totalRiders:'', specialRequests:'', guideCount:''};
+              return Object.keys(fields).reduce(
+                (s, k) => s.replace(new RegExp(`\\{${k}\\}`, 'g'), r[k] ?? ''), text
+              );
+            }
+            // compute recipients list for preview
+            function getRecipients() {
+              if (msgForm.recipientType === 'date' && msgForm.date) {
+                return reservations.filter(r => r.reservationDate === msgForm.date && r.status !== 'cancelled');
+              }
+              if (msgForm.recipientType === 'time' && msgForm.date && msgForm.time) {
+                return reservations.filter(r => r.reservationDate === msgForm.date && r.startTime === msgForm.time && r.status !== 'cancelled');
+              }
+              if (msgForm.recipientType === 'timerange' && msgForm.date && msgForm.timeFrom && msgForm.timeTo) {
+                return reservations.filter(r =>
+                  r.reservationDate === msgForm.date && r.status !== 'cancelled'
+                  && msgForm.timeFrom <= (r.startTime || '') && (r.startTime || '') <= msgForm.timeTo
+                );
+              }
+              if (msgForm.recipientType === 'daterange' && msgForm.dateFrom && msgForm.dateTo) {
+                return reservations.filter(r => r.reservationDate >= msgForm.dateFrom && r.reservationDate <= msgForm.dateTo && r.status !== 'cancelled');
+              }
+              return [];
+            }
+            const recipientList = getRecipients();
+            const reachable = recipientList.filter(r => r.phoneNumber);
+            const unreachable = recipientList.filter(r => !r.phoneNumber);
+            const previewRes = reachable[0] || null;
+            const ALL_TOKENS = ['firstName','lastName','phoneNumber','confirmationNumber','rideType',
+              'reservationDate','startTime','totalRiders','adultCount','childCount','specialRequests'];
 
-              <Card title="Compose Message">
-                <form onSubmit={submitMsg}>
-                  <div className="form-grid">
-                    <Field label="Send To">
-                      <select value={msgForm.recipientType} onChange={e => setMsgForm({...msgForm, recipientType:e.target.value})}>
-                        <option value="date">All reservations on a date</option>
-                        <option value="phone">Specific phone number</option>
-                      </select>
-                    </Field>
+            return (
+              <>
+                <div className="page-title">
+                  📲 Messages
+                  <span>Send SMS to guests via Twilio</span>
+                </div>
 
-                    {msgForm.recipientType === 'date' && (
-                      <Field label="Date">
-                        <input type="date" required value={msgForm.date} onChange={e => setMsgForm({...msgForm, date:e.target.value})} />
-                      </Field>
-                    )}
-                    {msgForm.recipientType === 'phone' && (
-                      <Field label="Phone Number">
-                        <input type="tel" required placeholder="(555) 000-0000" value={msgForm.phone} onChange={e => setMsgForm({...msgForm, phone:e.target.value})} />
-                      </Field>
-                    )}
-
-                    <Field label="Message" full>
-                      <textarea
-                        required rows={4}
-                        placeholder="Type your message to guests…"
-                        value={msgForm.message}
-                        onChange={e => setMsgForm({...msgForm, message:e.target.value})}
-                      />
-                    </Field>
+                {/* ── Template Picker ────────────────────────────────────── */}
+                <Card title="Message Template" style={{marginBottom:16}}>
+                  <div className="tpl-grid">
+                    {SMS_TEMPLATES.map(t => (
+                      <button key={t.id} type="button"
+                        className={`tpl-btn${msgForm.message === t.body && t.id !== 'custom' ? ' active' : ''}`}
+                        onClick={() => {
+                          if (t.id !== 'custom') setMsgForm(f => ({ ...f, message: t.body }));
+                          else setMsgForm(f => ({ ...f, message: '' }));
+                        }}>
+                        <span className="tpl-btn-icon">{t.icon}</span>
+                        {t.label}
+                      </button>
+                    ))}
                   </div>
-                  <div style={{marginTop:16, display:'flex', gap:12, alignItems:'center', flexWrap:'wrap'}}>
-                    <Btn type="submit" variant="primary" disabled={msgSending}>
-                      {msgSending ? 'Sending…' : '📲 Send SMS'}
-                    </Btn>
-                    <span style={{fontSize:'0.78rem', color:'var(--muted)'}}>Sent via Twilio · guests can reply STOP to opt out</span>
+                  <div style={{fontSize:'0.76rem', color:'var(--muted)', marginBottom:4}}>
+                    Available tokens — click to insert at cursor:
                   </div>
-                </form>
-              </Card>
-
-              {/* Recipient preview when sending by date */}
-              {msgForm.recipientType === 'date' && msgForm.date && (
-                <Card title={`Recipients — ${fmtDate(msgForm.date)}`} style={{marginTop:16}}>
-                  {reservations.filter(r => r.reservationDate === msgForm.date).length === 0 ? (
-                    <div className="empty-state">No reservations on this date</div>
-                  ) : (
-                    reservations.filter(r => r.reservationDate === msgForm.date).map(r => (
-                      <div key={r.id} style={{display:'flex', alignItems:'center', gap:12, padding:'9px 0', borderBottom:'1px solid var(--border)'}}>
-                        <div style={{flex:1}}>
-                          <strong style={{fontSize:'0.88rem'}}>{r.firstName} {r.lastName}</strong>
-                          <span style={{color:'var(--muted)', fontSize:'0.80rem', marginLeft:10}}>{fmtTime(r.startTime)} · {r.rideType}</span>
-                        </div>
-                        <div style={{fontSize:'0.82rem', color:'var(--muted)'}}>{r.phoneNumber || <span style={{color:'var(--danger)'}}>No phone</span>}</div>
-                        <Badge color={r.phoneNumber ? 'green' : 'red'}>{r.phoneNumber ? '✓ Reachable' : '✗ No phone'}</Badge>
-                      </div>
-                    ))
-                  )}
+                  <div className="token-chips" id="msg-token-chips">
+                    {ALL_TOKENS.map(tk => (
+                      <span key={tk} className="token-chip"
+                        onClick={() => {
+                          const ta = document.getElementById('msg-textarea');
+                          if (!ta) { setMsgForm(f => ({ ...f, message: (f.message || '') + `{${tk}}` })); return; }
+                          const s = ta.selectionStart, e2 = ta.selectionEnd;
+                          const val = ta.value;
+                          const next = val.slice(0,s) + `{${tk}}` + val.slice(e2);
+                          setMsgForm(f => ({ ...f, message: next }));
+                          setTimeout(() => { ta.focus(); ta.setSelectionRange(s + tk.length + 2, s + tk.length + 2); }, 0);
+                        }}>
+                        {`{${tk}}`}
+                      </span>
+                    ))}
+                  </div>
                 </Card>
-              )}
-            </>
-          )}
+
+                {/* ── Compose ────────────────────────────────────────────── */}
+                <Card title="Compose & Send">
+                  <form onSubmit={submitMsg}>
+                    <div className="form-grid">
+                      {/* Recipient type */}
+                      <Field label="Send To" full>
+                        <select value={msgForm.recipientType}
+                          onChange={e => setMsgForm(f => ({ ...f, recipientType: e.target.value }))}>
+                          <option value="date">All reservations on a date</option>
+                          <option value="time">All reservations on a date at a specific time</option>
+                          <option value="timerange">All reservations on a date within a time range</option>
+                          <option value="daterange">All reservations in a date range</option>
+                          <option value="phone">Specific phone number</option>
+                        </select>
+                      </Field>
+
+                      {/* Date selector (used by date, time, timerange types) */}
+                      {(msgForm.recipientType === 'date' || msgForm.recipientType === 'time' || msgForm.recipientType === 'timerange') && (
+                        <Field label="Date">
+                          <input type="date" required value={msgForm.date}
+                            onChange={e => setMsgForm(f => ({ ...f, date: e.target.value }))} />
+                        </Field>
+                      )}
+                      {/* Specific time */}
+                      {msgForm.recipientType === 'time' && (
+                        <Field label="Time">
+                          <select required value={msgForm.time}
+                            onChange={e => setMsgForm(f => ({ ...f, time: e.target.value }))}>
+                            <option value="">Select time…</option>
+                            {TIME_SLOTS.map(t => <option key={t} value={t}>{fmtTime(t)}</option>)}
+                          </select>
+                        </Field>
+                      )}
+                      {/* Time range */}
+                      {msgForm.recipientType === 'timerange' && (
+                        <>
+                          <Field label="From Time">
+                            <select required value={msgForm.timeFrom}
+                              onChange={e => setMsgForm(f => ({ ...f, timeFrom: e.target.value }))}>
+                              <option value="">Select…</option>
+                              {TIME_SLOTS.map(t => <option key={t} value={t}>{fmtTime(t)}</option>)}
+                            </select>
+                          </Field>
+                          <Field label="To Time">
+                            <select required value={msgForm.timeTo}
+                              onChange={e => setMsgForm(f => ({ ...f, timeTo: e.target.value }))}>
+                              <option value="">Select…</option>
+                              {TIME_SLOTS.map(t => <option key={t} value={t}>{fmtTime(t)}</option>)}
+                            </select>
+                          </Field>
+                        </>
+                      )}
+                      {/* Date range */}
+                      {msgForm.recipientType === 'daterange' && (
+                        <>
+                          <Field label="From Date">
+                            <input type="date" required value={msgForm.dateFrom}
+                              onChange={e => setMsgForm(f => ({ ...f, dateFrom: e.target.value }))} />
+                          </Field>
+                          <Field label="To Date">
+                            <input type="date" required value={msgForm.dateTo}
+                              onChange={e => setMsgForm(f => ({ ...f, dateTo: e.target.value }))} />
+                          </Field>
+                        </>
+                      )}
+                      {/* Phone */}
+                      {msgForm.recipientType === 'phone' && (
+                        <Field label="Phone Number">
+                          <input type="tel" required placeholder="+15550001234"
+                            value={msgForm.phone}
+                            onChange={e => setMsgForm(f => ({ ...f, phone: e.target.value }))} />
+                        </Field>
+                      )}
+
+                      {/* Message textarea */}
+                      <Field label={`Message${msgForm.message ? ` (${msgForm.message.length} chars)` : ''}`} full>
+                        <textarea id="msg-textarea" required rows={5}
+                          placeholder="Type a message or pick a template above…"
+                          value={msgForm.message}
+                          onChange={e => setMsgForm(f => ({ ...f, message: e.target.value }))}
+                        />
+                        {msgForm.message.length > 160 && (
+                          <div style={{fontSize:'0.77rem', color:'var(--warning, #ff9a3c)', marginTop:4}}>
+                            ⚠ Over 160 chars — this will be sent as {Math.ceil(msgForm.message.length / 153)} parts
+                          </div>
+                        )}
+                      </Field>
+
+                      {/* Live preview with first recipient's data */}
+                      {msgForm.message && (
+                        <Field label="Message Preview" full>
+                          <div className="msg-preview">
+                            {resolvePreview(msgForm.message, previewRes || {})}
+                          </div>
+                          {previewRes && (
+                            <div style={{fontSize:'0.75rem', color:'var(--muted)', marginTop:4}}>
+                              Preview shown with data from {previewRes.firstName} {previewRes.lastName}
+                            </div>
+                          )}
+                        </Field>
+                      )}
+                    </div>
+
+                    <div style={{marginTop:16, display:'flex', gap:12, alignItems:'center', flexWrap:'wrap'}}>
+                      <Btn type="submit" variant="primary" disabled={msgSending || !msgForm.message.trim()}>
+                        {msgSending ? 'Sending…' : `📲 Send${reachable.length > 0 ? ` to ${reachable.length} recipient${reachable.length!==1?'s':''}` : ' SMS'}`}
+                      </Btn>
+                      <Btn type="button" variant="ghost" onClick={() => setMsgForm({ ...EMPTY_MSG })}>
+                        Clear
+                      </Btn>
+                      <span style={{fontSize:'0.78rem', color:'var(--muted)'}}>
+                        Sent via Twilio · guests can reply STOP to opt out
+                      </span>
+                    </div>
+                  </form>
+                </Card>
+
+                {/* ── Recipient Preview ──────────────────────────────────── */}
+                {recipientList.length > 0 && (
+                  <Card title={`Recipients (${reachable.length} reachable${unreachable.length > 0 ? `, ${unreachable.length} no phone` : ''})`} style={{marginTop:16}}>
+                    <div className="recip-list">
+                      {reachable.map(r => (
+                        <div key={r.id} className="recip-row">
+                          <span className="recip-name">{r.firstName} {r.lastName}</span>
+                          <span className="recip-meta">{fmtTime(r.startTime)} · {r.rideType}</span>
+                          <span className="recip-meta">{r.phoneNumber}</span>
+                          <Badge color="green">✓ Reachable</Badge>
+                        </div>
+                      ))}
+                      {unreachable.map(r => (
+                        <div key={r.id} className="recip-row" style={{opacity:0.55}}>
+                          <span className="recip-name">{r.firstName} {r.lastName}</span>
+                          <span className="recip-meta">{fmtTime(r.startTime)} · {r.rideType}</span>
+                          <span className="recip-meta">—</span>
+                          <Badge color="red">✗ No phone</Badge>
+                        </div>
+                      ))}
+                    </div>
+                  </Card>
+                )}
+              </>
+            );
+          })()}
 
           {/* ── ACTIVITY LOG ── */}
           {view === 'activity' && (() => {
             const ACTION_TYPES = [
               'All Actions',
-              'Reservation created', 'Reservation updated', 'Reservation deleted',
+              'Reservation created', 'Reservation updated', 'Reservation cancelled', 'Reservation deleted',
               'Attendance updated',
               'Appointment added', 'Appointment updated', 'Appointment deleted',
               'Capacity updated', 'Settings updated',
               'User invited', 'Role updated', 'User activated', 'User deactivated',
               'Password reset link generated',
             ];
-            const [actSearch,     setActSearch]     = React.useState('');
-            const [actActionType, setActActionType] = React.useState('All Actions');
-            const [actDateFrom,   setActDateFrom]   = React.useState('');
-            const [actDateTo,     setActDateTo]     = React.useState('');
 
+            const CATEGORY_ACTIONS = {
+              all:          null,
+              reservations: ['Reservation created', 'Reservation updated', 'Reservation cancelled', 'Reservation deleted', 'Attendance updated'],
+              appointments: ['Appointment added', 'Appointment updated', 'Appointment deleted'],
+              system:       ['Capacity updated', 'Settings updated'],
+              users:        ['User invited', 'Role updated', 'User activated', 'User deactivated', 'Password reset link generated'],
+            };
+
+            const ACTION_ICONS = {
+              'Reservation created':   '📋',
+              'Reservation updated':   '✏️',
+              'Reservation cancelled': '🚫',
+              'Reservation deleted':   '🗑️',
+              'Attendance updated':    '✅',
+              'Appointment added':     '📅',
+              'Appointment updated':   '✏️',
+              'Appointment deleted':   '🗑️',
+              'Capacity updated':      '🔢',
+              'Settings updated':      '⚙️',
+              'User invited':          '👤',
+              'Role updated':          '🔑',
+              'User activated':        '✓',
+              'User deactivated':      '⊘',
+              'Password reset link generated': '🔒',
+            };
+
+            const actionCatColor = (action) => {
+              if (!action) return 'usr';
+              if (action.startsWith('Reservation') || action === 'Attendance updated') return 'res';
+              if (action.startsWith('Appointment')) return 'apt';
+              if (action === 'Capacity updated' || action === 'Settings updated') return 'sys';
+              return 'usr';
+            };
+
+            // Detail format: "TB-001 — Name on date | Field: old→new; Field2: old2→new2"
+            const parseDetail = (detail) => {
+              if (!detail) return { base: '', changes: [] };
+              const idx = detail.indexOf(' | ');
+              if (idx === -1) return { base: detail, changes: [] };
+              return {
+                base:    detail.slice(0, idx),
+                changes: detail.slice(idx + 3).split('; ').filter(Boolean),
+              };
+            };
+
+            const catActions = CATEGORY_ACTIONS[actCategory];
             const filtered = activity.filter(a => {
+              if (catActions && !catActions.includes(a.action)) return false;
               if (actActionType !== 'All Actions' && a.action !== actActionType) return false;
               if (actDateFrom && a.timestamp < actDateFrom) return false;
               if (actDateTo   && a.timestamp > actDateTo + 'T23:59:59') return false;
@@ -1322,28 +1913,39 @@ export default function App() {
               return true;
             });
 
-            const ACTION_ICONS = {
-              'Reservation created':  '📋',
-              'Reservation updated':  '✏️',
-              'Reservation deleted':  '🗑️',
-              'Attendance updated':   '✅',
-              'Appointment added':    '📅',
-              'Appointment updated':  '✏️',
-              'Appointment deleted':  '🗑️',
-              'Capacity updated':     '🔢',
-              'Settings updated':     '⚙️',
-              'User invited':         '👤',
-              'Role updated':         '🔑',
-              'User activated':       '✓',
-              'User deactivated':     '⊘',
-              'Password reset link generated': '🔒',
-            };
+            const CATS = [
+              { key:'all',          label:'All' },
+              { key:'reservations', label:'Reservations' },
+              { key:'appointments', label:'Appointments' },
+              { key:'system',       label:'System' },
+              { key:'users',        label:'Users' },
+            ];
 
             return (
               <>
                 <div className="page-title">
                   Activity Log
-                  <span>{filtered.length} event{filtered.length !== 1 ? 's' : ''}</span>
+                  <div style={{display:'flex', gap:8, alignItems:'center'}}>
+                    <span style={{fontSize:'0.8rem', color:'var(--muted)', fontWeight:400}}>{filtered.length} event{filtered.length !== 1 ? 's' : ''}</span>
+                    <div style={{display:'flex', border:'1px solid var(--border2)', borderRadius:8, overflow:'hidden'}}>
+                      <button onClick={() => setActViewMode('table')} style={{padding:'5px 12px', fontSize:'0.78rem', fontWeight:600, fontFamily:'inherit', border:'none', cursor:'pointer', background: actViewMode==='table' ? 'var(--accent)' : 'transparent', color: actViewMode==='table' ? '#071420' : 'var(--muted)'}}>
+                        ⊞ Table
+                      </button>
+                      <button onClick={() => setActViewMode('feed')} style={{padding:'5px 12px', fontSize:'0.78rem', fontWeight:600, fontFamily:'inherit', border:'none', cursor:'pointer', background: actViewMode==='feed' ? 'var(--accent)' : 'transparent', color: actViewMode==='feed' ? '#071420' : 'var(--muted)'}}>
+                        ☰ Feed
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Category tabs */}
+                <div style={{display:'flex', gap:6, marginBottom:12, flexWrap:'wrap'}}>
+                  {CATS.map(c => (
+                    <button key={c.key} onClick={() => { setActCategory(c.key); setActActionType('All Actions'); }}
+                      style={{padding:'5px 14px', borderRadius:20, fontSize:'0.80rem', fontWeight:600, fontFamily:'inherit', cursor:'pointer', border:'1px solid', borderColor: actCategory===c.key ? 'var(--accent)' : 'var(--border2)', background: actCategory===c.key ? 'rgba(97,243,211,0.12)' : 'transparent', color: actCategory===c.key ? 'var(--accent)' : 'var(--muted)', transition:'all 130ms'}}>
+                      {c.label}
+                    </button>
+                  ))}
                 </div>
 
                 {/* Filters */}
@@ -1358,14 +1960,16 @@ export default function App() {
                         style={{width:'100%', border:'1px solid var(--border2)', borderRadius:10, padding:'8px 12px', fontFamily:'inherit', fontSize:'0.85rem', color:'var(--ink)', background:'var(--card)', outline:'none'}}
                       />
                     </div>
-                    <select
-                      className="pill-select"
-                      value={actActionType}
-                      onChange={e => setActActionType(e.target.value)}
-                      style={{flex:1, minWidth:180}}
-                    >
-                      {ACTION_TYPES.map(t => <option key={t}>{t}</option>)}
-                    </select>
+                    {actCategory === 'all' && (
+                      <select
+                        className="pill-select"
+                        value={actActionType}
+                        onChange={e => setActActionType(e.target.value)}
+                        style={{flex:1, minWidth:180}}
+                      >
+                        {ACTION_TYPES.map(t => <option key={t}>{t}</option>)}
+                      </select>
+                    )}
                     <div style={{display:'flex', alignItems:'center', gap:6, flex:1, minWidth:220}}>
                       <input
                         type="date"
@@ -1391,18 +1995,70 @@ export default function App() {
 
                 {filtered.length === 0
                   ? <div className="empty-state">No events match your filters</div>
-                  : filtered.map(a => (
-                    <div key={a.id} className="log-item">
-                      <div style={{display:'flex', alignItems:'flex-start', gap:10}}>
-                        <span style={{fontSize:'1rem', lineHeight:'1.4', flexShrink:0}}>{ACTION_ICONS[a.action] || '•'}</span>
-                        <div style={{flex:1}}>
-                          <div className="log-action">{a.action}</div>
-                          <div className="log-detail">{a.detail}</div>
-                          <div className="log-ts">{fmtTs(a.timestamp)}{a.actor ? ` · ${a.actor}` : ''}</div>
-                        </div>
-                      </div>
-                    </div>
-                  ))
+                  : actViewMode === 'table'
+                    ? (
+                        <Card style={{padding:0, overflow:'hidden'}}>
+                          <div className="tbl-wrap">
+                            <table className="act-table">
+                              <thead>
+                                <tr>
+                                  <th style={{width:150}}>Date &amp; Time</th>
+                                  <th style={{width:200}}>Action</th>
+                                  <th>Detail</th>
+                                  <th style={{width:260}}>Changes</th>
+                                  <th style={{width:170}}>Staff</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {filtered.map(a => {
+                                  const { base, changes } = parseDetail(a.detail);
+                                  const cat = actionCatColor(a.action);
+                                  return (
+                                    <tr key={a.id}>
+                                      <td style={{fontSize:'0.78rem', color:'var(--muted)', whiteSpace:'nowrap'}}>
+                                        {fmtTs(a.timestamp)}
+                                      </td>
+                                      <td>
+                                        <span className={`act-badge act-badge-${cat}`}>
+                                          {ACTION_ICONS[a.action] || '•'} {a.action}
+                                        </span>
+                                      </td>
+                                      <td style={{fontSize:'0.83rem'}}>
+                                        {base || a.detail}
+                                      </td>
+                                      <td>
+                                        {changes.length > 0
+                                          ? <div style={{display:'flex', flexDirection:'column', gap:3}}>
+                                              {changes.map((c, i) => (
+                                                <span key={i} className="act-change">{c}</span>
+                                              ))}
+                                            </div>
+                                          : <span style={{color:'var(--border2)', fontSize:'0.75rem'}}>—</span>
+                                        }
+                                      </td>
+                                      <td style={{fontSize:'0.78rem', color:'var(--muted)'}}>{a.actor || '—'}</td>
+                                    </tr>
+                                  );
+                                })}
+                              </tbody>
+                            </table>
+                          </div>
+                        </Card>
+                      )
+                    : (
+                        filtered.map(a => (
+                          <div key={a.id} className="log-item">
+                            <div style={{display:'flex', alignItems:'flex-start', gap:10}}>
+                              <span style={{fontSize:'1rem', lineHeight:'1.4', flexShrink:0}}>{ACTION_ICONS[a.action] || '•'}</span>
+                              <div style={{flex:1}}>
+                                <div className="log-action">{a.action}</div>
+                                <div className="log-detail">{a.detail}</div>
+                                <div className="log-ts">{fmtTs(a.timestamp)}{a.actor ? ` · ${a.actor}` : ''}</div>
+                              </div>
+                            </div>
+                          </div>
+                        ))
+                      )
                 }
               </>
             );
@@ -1461,9 +2117,9 @@ export default function App() {
                               <Btn
                                 variant="ghost"
                                 size="sm"
-                                onClick={() => handleResetPassword(u)}
+                                onClick={() => { setShowSetPass(u); setSetPassVal(''); }}
                               >
-                                ↺ Reset Password
+                                🔑 Set Password
                               </Btn>
                             </div>
                           </td>
