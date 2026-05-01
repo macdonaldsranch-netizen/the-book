@@ -260,7 +260,7 @@ const BASE_STYLES = `
   .slot-avail-title { font-size:0.72rem; font-weight:700; text-transform:uppercase; letter-spacing:0.08em; margin-bottom:8px; color:var(--muted); }
   .slot-avail-row { display:flex; align-items:center; justify-content:space-between; margin-bottom:10px; gap:8px; flex-wrap:wrap; }
   .slot-avail-status { font-size:0.95rem; font-weight:700; color:var(--ink); display:inline-flex; align-items:center; gap:8px; }
-  .slot-avail-status::before { content:''; width:10px; height:10px; border-radius:99px; background:currentColor; display:inline-block; }
+  .slot-avail-status .sa-dot { width:10px; height:10px; border-radius:99px; display:inline-block; flex-shrink:0; }
   .slot-avail-count { font-size:0.84rem; font-weight:600; color:var(--ink); opacity:0.9; }
   .slot-avail-bar-track { height:8px; border-radius:99px; background:rgba(148,163,184,0.22); overflow:hidden; margin-bottom:10px; }
   .slot-avail-bar-fill  { height:100%; border-radius:99px; transition:width 250ms ease; }
@@ -268,11 +268,11 @@ const BASE_STYLES = `
   .slot-avail-chip { font-size:0.75rem; padding:3px 9px; border-radius:6px; background:rgba(148,163,184,0.18); color:var(--ink); border:1px solid var(--border2); }
   .slot-avail-warning { margin-top:10px; padding:9px 11px; border-radius:8px; font-size:0.82rem; font-weight:600; display:flex; align-items:center; gap:6px; background:rgba(255,107,107,0.18); color:#ffb4b4; border:1px solid rgba(255,107,107,0.45); }
   .slot-avail.sa-open   { background:rgba(61,214,181,0.14);  border-color:rgba(61,214,181,0.45);  }
-  .slot-avail.sa-open   .slot-avail-status { color:#5eead4; }
+  .slot-avail.sa-open   .sa-dot { background:#5eead4; box-shadow:0 0 0 2px rgba(94,234,212,0.25); }
   .slot-avail.sa-busy   { background:rgba(255,154,60,0.16);  border-color:rgba(255,154,60,0.50);  }
-  .slot-avail.sa-busy   .slot-avail-status { color:#ffb766; }
+  .slot-avail.sa-busy   .sa-dot { background:#ffb766; box-shadow:0 0 0 2px rgba(255,154,60,0.25); }
   .slot-avail.sa-full   { background:rgba(255,107,107,0.18);  border-color:rgba(255,107,107,0.50); }
-  .slot-avail.sa-full   .slot-avail-status { color:#ff8e8e; }
+  .slot-avail.sa-full   .sa-dot { background:#ff8e8e; box-shadow:0 0 0 2px rgba(255,107,107,0.25); }
 
   /* SMS compose */
   .tpl-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(160px,1fr)); gap:8px; margin-bottom:16px; }
@@ -492,7 +492,7 @@ const EMPTY_RES = {
   adultCount:1, childCount:0, childAges:'',
   depositAmount:'', discountAmount:'', discountReason:'', cardType:'', cardLast4:'',
   specialRequests:'', notes:'', guideCount:1,
-  guideId:'', guideName:'',
+  guideId:'', guideName:'', guideIds:[], guideNames:[],
   bookedToCapacity:false, textConfirmationStatus:'Pending',
   followUpStatus:'Pending', attendanceStatus:null, status:'active',
 };
@@ -729,6 +729,7 @@ export default function App() {
 
   // ─ Send-confirmation-on-save toggle (booking form)
   const [sendConfirmOnSave, setSendConfirmOnSave] = useState(true);
+  const [confirmTemplateId, setConfirmTemplateId] = useState('confirm');
 
   // ─ Guides
   const [guides,        setGuides]        = useState([]);
@@ -863,13 +864,23 @@ export default function App() {
     setResForm({ ...EMPTY_RES, reservationDate: prefillDate || today() });
     setOverrideCap(false);
     setSendConfirmOnSave(true);  // default ON for brand-new bookings
+    setConfirmTemplateId('confirm');
     setShowResForm(true);
   }
   function openEditRes(r) {
     setEditingResId(r.id);
-    setResForm({ ...r });
+    // Backward-compat: if old single guideId/guideName exists but no array, hydrate the array
+    const hydrated = { ...r };
+    if ((!hydrated.guideIds || hydrated.guideIds.length === 0) && hydrated.guideId) {
+      hydrated.guideIds = [hydrated.guideId];
+      hydrated.guideNames = hydrated.guideName ? [hydrated.guideName] : [];
+    }
+    if (!hydrated.guideIds) hydrated.guideIds = [];
+    if (!hydrated.guideNames) hydrated.guideNames = [];
+    setResForm(hydrated);
     setOverrideCap(false);
     setSendConfirmOnSave(false);  // default OFF when editing existing
+    setConfirmTemplateId('confirm');
     setShowResForm(true);
   }
   async function submitRes(e) {
@@ -896,8 +907,8 @@ export default function App() {
 
       // Send confirmation SMS if requested and phone present
       if (sendConfirmOnSave && body.phoneNumber && body.phoneNumber.trim()) {
-        const tpl = SMS_TEMPLATES.find(t => t.id === 'confirm');
-        if (tpl) {
+        const tpl = SMS_TEMPLATES.find(t => t.id === confirmTemplateId) || SMS_TEMPLATES.find(t => t.id === 'confirm');
+        if (tpl && tpl.body) {
           try {
             // Prefer reservation_id when we have it (template fields will resolve);
             // fall back to direct `to` phone if we don't.
@@ -1180,6 +1191,7 @@ export default function App() {
                   <div className="slot-avail-title">Slot Availability</div>
                   <div className="slot-avail-row">
                     <span className="slot-avail-status">
+                      <span className="sa-dot" />
                       {slotStatusTxt} — {fmtTime(resForm.startTime)}, {fmtDate(resForm.reservationDate)}
                     </span>
                     <span className="slot-avail-count">
@@ -1235,25 +1247,35 @@ export default function App() {
                 </select>
               </Field>
               <Field label="Card Last 4"><input maxLength={4} value={resForm.cardLast4} onChange={e => setResForm({...resForm, cardLast4:e.target.value})} /></Field>
-              <Field label="Assigned Guide">
+              <Field label="Assigned Guides" full>
                 <select
-                  value={resForm.guideId || ''}
+                  multiple
+                  size={Math.min(6, Math.max(3, guides.filter(g => g.active !== false).length))}
+                  value={Array.isArray(resForm.guideIds) ? resForm.guideIds : (resForm.guideId ? [resForm.guideId] : [])}
                   onChange={e => {
-                    const g = guides.find(x => x.id === e.target.value);
+                    const ids = Array.from(e.target.selectedOptions).map(o => o.value);
+                    const names = ids.map(id => {
+                      const g = guides.find(x => x.id === id);
+                      return g ? g.name : '';
+                    }).filter(Boolean);
                     setResForm({
                       ...resForm,
-                      guideId:   e.target.value,
-                      guideName: g ? g.name : '',
+                      guideIds:   ids,
+                      guideNames: names,
+                      // Keep legacy single-value fields in sync for backward compat
+                      guideId:    ids[0] || '',
+                      guideName:  names.join(', '),
                     });
                   }}
+                  style={{minHeight:80, fontFamily:'inherit'}}
                 >
-                  <option value="">— Unassigned —</option>
                   {guides.filter(g => g.active !== false).map(g => (
                     <option key={g.id} value={g.id}>
-                      {g.name}{g.employmentType === 'fulltime' ? ' (FT)' : ''}
+                      {g.name}{g.employmentType === 'fulltime' ? ' (FT)' : g.employmentType === 'parttime' ? ' (PT)' : ''}
                     </option>
                   ))}
                 </select>
+                <div style={{fontSize:'0.72rem', color:'var(--muted)', marginTop:4}}>Hold Ctrl (Cmd on Mac) to select multiple guides</div>
               </Field>
               <Field label="# of Guides Needed"><input type="number" min={0} value={resForm.guideCount} onChange={e => setResForm({...resForm, guideCount:Number(e.target.value)})} /></Field>
               <Field label="Text Confirmation">
@@ -1278,26 +1300,57 @@ export default function App() {
                 </label>
               )}
               {/* Send confirmation SMS on save */}
-              <label
+              <div
                 style={{
-                  display:'flex', alignItems:'center', gap:8, fontSize:'0.85rem',
-                  color: resForm.phoneNumber ? 'var(--ink)' : 'var(--muted)',
-                  marginBottom:12, cursor: resForm.phoneNumber ? 'pointer' : 'not-allowed',
-                  padding:'8px 12px', background:'var(--card)', borderRadius:8,
+                  display:'flex', flexDirection:'column', gap:8,
+                  marginBottom:12,
+                  padding:'10px 12px', background:'var(--card)', borderRadius:8,
                   border:'1px solid var(--border2)',
                 }}
-                title={resForm.phoneNumber ? '' : 'Add a phone number to send a confirmation SMS'}
               >
-                <input
-                  type="checkbox"
-                  checked={sendConfirmOnSave && !!resForm.phoneNumber}
-                  disabled={!resForm.phoneNumber}
-                  onChange={e => setSendConfirmOnSave(e.target.checked)}
-                  style={{width:15, height:15, accentColor:'var(--accent)'}}
-                />
-                📲 Send confirmation SMS to <strong>{resForm.phoneNumber || 'guest'}</strong> on save
-                {!resForm.phoneNumber && <span style={{fontSize:'0.75rem', opacity:0.7}}>(no phone number)</span>}
-              </label>
+                <label
+                  style={{
+                    display:'flex', alignItems:'center', gap:8, fontSize:'0.85rem',
+                    color: resForm.phoneNumber ? 'var(--ink)' : 'var(--muted)',
+                    cursor: resForm.phoneNumber ? 'pointer' : 'not-allowed',
+                  }}
+                  title={resForm.phoneNumber ? '' : 'Add a phone number to send a confirmation SMS'}
+                >
+                  <input
+                    type="checkbox"
+                    checked={sendConfirmOnSave && !!resForm.phoneNumber}
+                    disabled={!resForm.phoneNumber}
+                    onChange={e => setSendConfirmOnSave(e.target.checked)}
+                    style={{width:15, height:15, accentColor:'var(--accent)'}}
+                  />
+                  📲 Send SMS to <strong>{resForm.phoneNumber || 'guest'}</strong> on save
+                  {!resForm.phoneNumber && <span style={{fontSize:'0.75rem', opacity:0.7}}>(no phone number)</span>}
+                </label>
+                {sendConfirmOnSave && resForm.phoneNumber && (
+                  <div style={{display:'flex', flexDirection:'column', gap:6}}>
+                    <div style={{display:'flex', alignItems:'center', gap:8, flexWrap:'wrap'}}>
+                      <label style={{fontSize:'0.78rem', color:'var(--muted)', fontWeight:600}}>Template:</label>
+                      <select
+                        value={confirmTemplateId}
+                        onChange={e => setConfirmTemplateId(e.target.value)}
+                        style={{padding:'5px 9px', borderRadius:6, background:'var(--bg2)', border:'1px solid var(--border2)', color:'var(--ink)', fontFamily:'inherit', fontSize:'0.83rem'}}
+                      >
+                        {SMS_TEMPLATES.filter(t => t.id !== 'custom').map(t => (
+                          <option key={t.id} value={t.id}>{t.icon} {t.label}</option>
+                        ))}
+                      </select>
+                    </div>
+                    {(() => {
+                      const tpl = SMS_TEMPLATES.find(t => t.id === confirmTemplateId);
+                      return tpl?.body ? (
+                        <div style={{fontSize:'0.74rem', color:'var(--muted)', fontStyle:'italic', padding:'6px 8px', background:'var(--bg2)', borderRadius:6, border:'1px solid var(--border2)', whiteSpace:'pre-wrap'}}>
+                          Preview: {tpl.body}
+                        </div>
+                      ) : null;
+                    })()}
+                  </div>
+                )}
+              </div>
               <div style={{display:'flex', gap:10}}>
                 <Btn type="submit" variant="primary"
                   disabled={slotProjected > maxRiders && !overrideCap}>
@@ -1381,7 +1434,7 @@ export default function App() {
               <div><strong>Children:</strong> {detailRes.childCount || 0}{detailRes.childAges ? ` (ages ${detailRes.childAges})` : ''}</div>
               <div><strong>Total Riders:</strong> {detailRes.totalRiders}</div>
               <div><strong>Guides Needed:</strong> {detailRes.guideCount || 0}</div>
-              <div><strong>Assigned Guide:</strong> {detailRes.guideName || <span style={{opacity:0.6}}>Unassigned</span>}</div>
+              <div><strong>Assigned Guide{(detailRes.guideNames && detailRes.guideNames.length > 1) ? 's' : ''}:</strong> {(detailRes.guideNames && detailRes.guideNames.length > 0) ? detailRes.guideNames.join(', ') : (detailRes.guideName || <span style={{opacity:0.6}}>Unassigned</span>)}</div>
               <div><strong>Deposit:</strong> {detailRes.depositAmount ? `$${Number(detailRes.depositAmount).toFixed(2)}` : <span style={{opacity:0.6}}>—</span>}</div>
               <div><strong>Discount:</strong> {detailRes.discountAmount ? `$${Number(detailRes.discountAmount).toFixed(2)}${detailRes.discountReason ? ` (${detailRes.discountReason})` : ''}` : <span style={{opacity:0.6}}>—</span>}</div>
               <div><strong>Payment:</strong> {detailRes.cardType ? `${detailRes.cardType}${detailRes.cardLast4 ? ` ···${detailRes.cardLast4}` : ''}` : <span style={{opacity:0.6}}>—</span>}</div>
