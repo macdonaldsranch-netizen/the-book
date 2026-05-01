@@ -168,6 +168,34 @@ const BASE_STYLES = `
   .day-totals-bar .dtb-a { color:var(--accent2); font-weight:700; }
   .day-totals-bar .dtb-c { color:var(--accent3); font-weight:700; }
   .day-totals-bar .dtb-t { color:var(--accent);  font-weight:700; }
+
+  /* Month/Week calendar (Phase 2) */
+  .mcal-toolbar { display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:12px; }
+  .mcal-toolbar .mcal-title { font-size:1.05rem; font-weight:700; color:var(--ink); margin-right:auto; }
+  .mcal-mode { display:inline-flex; gap:0; background:var(--card); border:1px solid var(--border2); border-radius:8px; overflow:hidden; }
+  .mcal-mode button { background:transparent; border:0; color:var(--muted); padding:6px 14px; font-size:0.84rem; font-weight:600; cursor:pointer; font-family:inherit; }
+  .mcal-mode button.active { background:var(--accent); color:#fff; }
+  .mcal-grid { display:grid; grid-template-columns:repeat(7, 1fr); border:1px solid var(--border); border-radius:14px; overflow:hidden; background:var(--card); }
+  .mcal-dow { padding:9px 10px; background:var(--card2, var(--card)); border-bottom:1px solid var(--border); font-size:0.74rem; font-weight:700; color:var(--muted); text-transform:uppercase; letter-spacing:0.06em; text-align:center; }
+  .mcal-day { min-height:115px; padding:6px 7px; border-top:1px solid var(--border); border-left:1px solid var(--border); display:flex; flex-direction:column; gap:3px; cursor:pointer; transition:background 120ms; background:var(--bg, transparent); position:relative; }
+  .mcal-day:hover { background:rgba(94,234,212,0.05); }
+  .mcal-day.other-month { opacity:0.45; background:rgba(148,163,184,0.04); }
+  .mcal-day.is-today { background:rgba(94,234,212,0.10); }
+  .mcal-day.is-today .mcal-daynum { color:var(--accent); font-weight:800; }
+  .mcal-daynum { font-size:0.78rem; font-weight:600; color:var(--ink); margin-bottom:2px; }
+  .mcal-pill { font-size:0.68rem; padding:2px 5px; border-radius:5px; border:1px solid; font-weight:600; line-height:1.25; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; cursor:pointer; }
+  .mcal-pill:hover { filter:brightness(1.15); }
+  .mcal-more { font-size:0.68rem; color:var(--muted); font-weight:600; padding:1px 4px; }
+  .mcal-week-grid { display:grid; grid-template-columns:60px repeat(7, 1fr); border:1px solid var(--border); border-radius:14px; overflow:hidden; background:var(--card); }
+  .mcal-week-dow { padding:9px 6px; border-bottom:1px solid var(--border); font-size:0.74rem; font-weight:700; color:var(--muted); text-transform:uppercase; text-align:center; background:var(--card); }
+  .mcal-week-dow.is-today { color:var(--accent); }
+  .mcal-week-time { font-size:0.72rem; font-weight:600; color:var(--muted); padding:4px 6px; border-top:1px solid var(--border); text-align:right; background:var(--card); }
+  .mcal-week-cell { min-height:42px; padding:3px 4px; border-top:1px solid var(--border); border-left:1px solid var(--border); display:flex; flex-direction:column; gap:2px; }
+  @media (max-width:780px) {
+    .mcal-day { min-height:78px; padding:4px 5px; }
+    .mcal-pill { font-size:0.62rem; padding:1px 4px; }
+    .mcal-week-grid { grid-template-columns:48px repeat(7, 1fr); }
+  }
   .cal-res-pill { border:1px solid; border-radius:8px; padding:5px 9px; margin-bottom:4px; font-size:0.80rem; }
   .cal-res-pill.booked { background:rgba(255,107,107,0.08) !important; border-color:rgba(255,107,107,0.22) !important; }
   .cal-res-sentence { font-size:0.77rem; color:var(--muted); margin-top:2px; line-height:1.5; }
@@ -228,19 +256,23 @@ const BASE_STYLES = `
   .cap-badge:hover { border-color:var(--accent); color:var(--accent); }
 
   /* Slot availability panel */
-  .slot-avail { border-radius:12px; padding:12px 14px; border:1px solid; transition:background 200ms, border-color 200ms; }
-  .slot-avail-title { font-size:0.75rem; font-weight:700; text-transform:uppercase; letter-spacing:0.07em; opacity:0.7; margin-bottom:6px; }
-  .slot-avail-row { display:flex; align-items:center; justify-content:space-between; margin-bottom:8px; gap:8px; }
-  .slot-avail-status { font-size:0.88rem; font-weight:700; }
-  .slot-avail-count { font-size:0.82rem; font-weight:500; opacity:0.8; }
-  .slot-avail-bar-track { height:7px; border-radius:99px; background:rgba(148,163,184,0.18); overflow:hidden; margin-bottom:8px; }
+  .slot-avail { border-radius:12px; padding:14px 16px; border:1px solid; transition:background 200ms, border-color 200ms; color:var(--ink); background:var(--card); }
+  .slot-avail-title { font-size:0.72rem; font-weight:700; text-transform:uppercase; letter-spacing:0.08em; margin-bottom:8px; color:var(--muted); }
+  .slot-avail-row { display:flex; align-items:center; justify-content:space-between; margin-bottom:10px; gap:8px; flex-wrap:wrap; }
+  .slot-avail-status { font-size:0.95rem; font-weight:700; color:var(--ink); display:inline-flex; align-items:center; gap:8px; }
+  .slot-avail-status::before { content:''; width:10px; height:10px; border-radius:99px; background:currentColor; display:inline-block; }
+  .slot-avail-count { font-size:0.84rem; font-weight:600; color:var(--ink); opacity:0.9; }
+  .slot-avail-bar-track { height:8px; border-radius:99px; background:rgba(148,163,184,0.22); overflow:hidden; margin-bottom:10px; }
   .slot-avail-bar-fill  { height:100%; border-radius:99px; transition:width 250ms ease; }
-  .slot-avail-chips { display:flex; flex-wrap:wrap; gap:4px; margin-top:6px; }
-  .slot-avail-chip { font-size:0.73rem; padding:2px 8px; border-radius:6px; background:rgba(148,163,184,0.10); }
-  .slot-avail-warning { margin-top:8px; padding:8px 10px; border-radius:8px; font-size:0.80rem; font-weight:600; display:flex; align-items:center; gap:6px; background:rgba(255,107,107,0.12); color:#ff6b6b; border:1px solid rgba(255,107,107,0.28); }
-  .slot-avail.sa-open   { background:rgba(61,214,181,0.07); border-color:rgba(61,214,181,0.28); color:#3dd6b5; }
-  .slot-avail.sa-busy   { background:rgba(255,154,60,0.08);  border-color:rgba(255,154,60,0.32);  color:#ff9a3c; }
-  .slot-avail.sa-full   { background:rgba(255,107,107,0.08); border-color:rgba(255,107,107,0.30); color:#ff6b6b; }
+  .slot-avail-chips { display:flex; flex-wrap:wrap; gap:6px; margin-top:6px; }
+  .slot-avail-chip { font-size:0.75rem; padding:3px 9px; border-radius:6px; background:rgba(148,163,184,0.18); color:var(--ink); border:1px solid var(--border2); }
+  .slot-avail-warning { margin-top:10px; padding:9px 11px; border-radius:8px; font-size:0.82rem; font-weight:600; display:flex; align-items:center; gap:6px; background:rgba(255,107,107,0.18); color:#ffb4b4; border:1px solid rgba(255,107,107,0.45); }
+  .slot-avail.sa-open   { background:rgba(61,214,181,0.14);  border-color:rgba(61,214,181,0.45);  }
+  .slot-avail.sa-open   .slot-avail-status { color:#5eead4; }
+  .slot-avail.sa-busy   { background:rgba(255,154,60,0.16);  border-color:rgba(255,154,60,0.50);  }
+  .slot-avail.sa-busy   .slot-avail-status { color:#ffb766; }
+  .slot-avail.sa-full   { background:rgba(255,107,107,0.18);  border-color:rgba(255,107,107,0.50); }
+  .slot-avail.sa-full   .slot-avail-status { color:#ff8e8e; }
 
   /* SMS compose */
   .tpl-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(160px,1fr)); gap:8px; margin-bottom:16px; }
@@ -686,6 +718,10 @@ export default function App() {
   // ─ Date navigation (Dashboard + Reservations list)
   const [dashDate,     setDashDate]     = useState(today());     // dashboard "today's reservations" date
   const [resListDate,  setResListDate]  = useState('');          // '' = all dates; else YYYY-MM-DD
+
+  // ─ Calendar view (Phase 2: month/week navigation, Mon-start)
+  const [calMode,      setCalMode]      = useState('month');     // 'month' | 'week'
+  const [calCursor,    setCalCursor]    = useState(today());     // any date inside the visible month/week
 
   // ─ Reservation detail modal (click a reservation to view full details)
   const [showResDetail, setShowResDetail] = useState(false);
@@ -1165,7 +1201,7 @@ export default function App() {
                       <div style={{fontSize:'0.76rem', opacity:0.7, marginBottom:4}}>Already booked at this time:</div>
                       <div className="slot-avail-chips">
                         {slotRes.map(r => (
-                          <span key={r.id} className="slot-avail-chip" style={{color:'var(--muted)'}}>
+                          <span key={r.id} className="slot-avail-chip">
                             {r.firstName} {r.lastName} · {r.rideType} · {r.totalRiders} rider{r.totalRiders !== 1 ? 's' : ''}
                           </span>
                         ))}
@@ -1600,6 +1636,7 @@ export default function App() {
           <NavBtn icon={ICONS.list}      label="Reservations" active={view==='reservations'} onClick={() => { setView('reservations'); setSidebarOpen(false); }} />
           <NavBtn icon={ICONS.users}     label="Staff Appts"  active={view==='appointments'} onClick={() => { setView('appointments'); setSidebarOpen(false); }} />
           <NavBtn icon={ICONS.calendar}  label="Day View"     active={view==='calendar'}     onClick={() => { setView('calendar');     setSidebarOpen(false); }} />
+          <NavBtn icon={ICONS.calendar}  label="Calendar"     active={view==='monthCal'}     onClick={() => { setView('monthCal');     setSidebarOpen(false); }} />
           <NavBtn icon={ICONS.message}   label="Messages"     active={view==='messages'}     onClick={() => { setView('messages');     setSidebarOpen(false); }} />
 
           {isAdmin && (
@@ -1874,6 +1911,169 @@ export default function App() {
               </Card>
             </>
           )}
+
+          {/* ── MONTH / WEEK CALENDAR (Phase 2) ── */}
+          {view === 'monthCal' && (() => {
+            // Parse cursor date
+            const cursor = new Date(calCursor + 'T00:00:00');
+            const todayD = new Date(today() + 'T00:00:00');
+            const toIso = d => d.toISOString().slice(0, 10);
+            // Mon-start week: getDay()=0(Sun)..6(Sat); convert to 0(Mon)..6(Sun)
+            const monIdx = d => (d.getDay() + 6) % 7;
+
+            // Build day list
+            let days = [];
+            let title = '';
+            if (calMode === 'month') {
+              const firstOfMonth = new Date(cursor.getFullYear(), cursor.getMonth(), 1);
+              const lastOfMonth  = new Date(cursor.getFullYear(), cursor.getMonth() + 1, 0);
+              const start = new Date(firstOfMonth);
+              start.setDate(start.getDate() - monIdx(firstOfMonth));   // back up to Monday
+              const end = new Date(lastOfMonth);
+              end.setDate(end.getDate() + (6 - monIdx(lastOfMonth)));  // forward to Sunday
+              for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) days.push(new Date(d));
+              title = cursor.toLocaleDateString('en-US', { month:'long', year:'numeric' });
+            } else {
+              const wkStart = new Date(cursor);
+              wkStart.setDate(wkStart.getDate() - monIdx(cursor));
+              for (let i = 0; i < 7; i++) {
+                const d = new Date(wkStart); d.setDate(d.getDate() + i); days.push(d);
+              }
+              const wkEnd = days[6];
+              title = `${wkStart.toLocaleDateString('en-US',{month:'short',day:'numeric'})} – ${wkEnd.toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'})}`;
+            }
+
+            // Reservations grouped by date (exclude cancelled)
+            const byDate = {};
+            for (const r of reservations) {
+              if (r.status === 'cancelled') continue;
+              (byDate[r.reservationDate] = byDate[r.reservationDate] || []).push(r);
+            }
+            for (const k of Object.keys(byDate)) {
+              byDate[k].sort((a, b) => (a.startTime || '').localeCompare(b.startTime || ''));
+            }
+
+            const goPrev = () => {
+              const d = new Date(calCursor + 'T00:00:00');
+              if (calMode === 'month') d.setMonth(d.getMonth() - 1); else d.setDate(d.getDate() - 7);
+              setCalCursor(toIso(d));
+            };
+            const goNext = () => {
+              const d = new Date(calCursor + 'T00:00:00');
+              if (calMode === 'month') d.setMonth(d.getMonth() + 1); else d.setDate(d.getDate() + 7);
+              setCalCursor(toIso(d));
+            };
+
+            const DOW = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
+
+            return (
+              <>
+                <div className="page-title">Calendar</div>
+                <div className="mcal-toolbar">
+                  <Btn size="sm" onClick={goPrev}>◀ Prev</Btn>
+                  <Btn size="sm" onClick={() => setCalCursor(today())}>Today</Btn>
+                  <Btn size="sm" onClick={goNext}>Next ▶</Btn>
+                  <input type="date" value={calCursor} onChange={e => setCalCursor(e.target.value)}
+                    style={{background:'var(--card)', border:'1px solid var(--border2)', borderRadius:8, padding:'6px 10px', color:'var(--ink)', fontSize:'0.84rem', fontFamily:'inherit', outline:'none'}} />
+                  <span className="mcal-title">{title}</span>
+                  <div className="mcal-mode">
+                    <button className={calMode==='month'?'active':''} onClick={() => setCalMode('month')}>Month</button>
+                    <button className={calMode==='week' ?'active':''} onClick={() => setCalMode('week')}>Week</button>
+                  </div>
+                </div>
+
+                {calMode === 'month' && (
+                  <div className="mcal-grid">
+                    {DOW.map(d => <div key={d} className="mcal-dow">{d}</div>)}
+                    {days.map(d => {
+                      const iso = toIso(d);
+                      const isToday = iso === today();
+                      const otherMonth = d.getMonth() !== cursor.getMonth();
+                      const dayRes = byDate[iso] || [];
+                      const visible = dayRes.slice(0, 3);
+                      const more = dayRes.length - visible.length;
+                      return (
+                        <div key={iso}
+                          className={`mcal-day${otherMonth?' other-month':''}${isToday?' is-today':''}`}
+                          onClick={() => { setDashDate(iso); setView('dashboard'); }}
+                          title={`${d.toLocaleDateString('en-US',{weekday:'long',month:'long',day:'numeric'})} — click to open in Dashboard`}>
+                          <div className="mcal-daynum">{d.getDate()}</div>
+                          {visible.map(r => {
+                            const st = rideStyle(r.rideType);
+                            return (
+                              <div key={r.id} className="mcal-pill"
+                                style={{background:st.bg, borderColor:st.border, color:st.text}}
+                                onClick={e => { e.stopPropagation(); openResDetail(r); }}
+                                title={`${fmtTime(r.startTime)} ${r.firstName} ${r.lastName} (${r.totalRiders} riders)`}>
+                                {fmtTime(r.startTime)} {r.firstName} {r.lastName}
+                              </div>
+                            );
+                          })}
+                          {more > 0 && <div className="mcal-more">+{more} more</div>}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+
+                {calMode === 'week' && (() => {
+                  // Hourly time grid 5am-9pm
+                  const hours = [];
+                  for (let h = 5; h <= 21; h++) hours.push(h);
+                  return (
+                    <div className="mcal-week-grid">
+                      <div className="mcal-week-dow"></div>
+                      {days.map(d => {
+                        const iso = toIso(d);
+                        const isToday = iso === today();
+                        return (
+                          <div key={iso} className={`mcal-week-dow${isToday?' is-today':''}`}
+                            style={{cursor:'pointer'}}
+                            onClick={() => { setDashDate(iso); setView('dashboard'); }}>
+                            {DOW[(d.getDay()+6)%7]}<br/>
+                            <span style={{fontSize:'0.95rem', color:isToday?'var(--accent)':'var(--ink)'}}>{d.getDate()}</span>
+                          </div>
+                        );
+                      })}
+                      {hours.map(h => (
+                        <React.Fragment key={h}>
+                          <div className="mcal-week-time">{((h%12)||12)}{h<12?'a':'p'}</div>
+                          {days.map(d => {
+                            const iso = toIso(d);
+                            const dayRes = byDate[iso] || [];
+                            const cellRes = dayRes.filter(r => {
+                              if (!r.startTime) return false;
+                              const rh = parseInt(r.startTime.split(':')[0], 10);
+                              return rh === h;
+                            });
+                            return (
+                              <div key={iso+'-'+h} className="mcal-week-cell">
+                                {cellRes.map(r => {
+                                  const st = rideStyle(r.rideType);
+                                  return (
+                                    <div key={r.id} className="mcal-pill"
+                                      style={{background:st.bg, borderColor:st.border, color:st.text}}
+                                      onClick={() => openResDetail(r)}
+                                      title={`${fmtTime(r.startTime)} ${r.firstName} ${r.lastName}`}>
+                                      {fmtTime(r.startTime)} {r.firstName} {r.lastName.charAt(0)}.
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            );
+                          })}
+                        </React.Fragment>
+                      ))}
+                    </div>
+                  );
+                })()}
+
+                <div style={{marginTop:14, fontSize:'0.78rem', color:'var(--muted)'}}>
+                  💡 Tip: Click a reservation to view details · Click a day header to open it in the Dashboard
+                </div>
+              </>
+            );
+          })()}
 
           {/* ── DAY CALENDAR ── */}
           {view === 'calendar' && (
