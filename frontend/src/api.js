@@ -66,6 +66,12 @@ export const enableUser          = (uid)           => request('POST',   '/users/
 export const resetUserPassword   = (uid)           => request('POST',   '/users/reset-password', { uid });
 export const setUserPassword     = (uid, password) => request('POST',   '/users/set-password', { uid, password });
 
+// ── Guides (staff can read, admin manages) ───────────────────────────────────
+export const listGuides          = ()              => request('GET',    '/guides');
+export const createGuide         = (body)          => request('POST',   '/guides', body);
+export const updateGuide         = (id, body)      => request('PUT',    `/guides/${id}`, body);
+export const deleteGuide         = (id)            => request('DELETE', `/guides/${id}`);
+
 // ── SMS / Messaging (staff + admin) ──────────────────────────────────────────
 // body: { message, to? } | { message, date? } | { message, time? } |
 //       { message, time_from?, time_to? } | { message, date_from?, date_to? } |

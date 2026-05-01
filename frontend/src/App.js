@@ -175,6 +175,7 @@ const BASE_STYLES = `
   .attendance-btn { font-size:0.70rem; padding:2px 8px; border-radius:6px; border:1px solid var(--border2); background:transparent; cursor:pointer; margin-top:3px; font-family:inherit; color:var(--muted); }
   .attendance-btn.checked-in { background:rgba(92,230,154,0.12); color:var(--success); border-color:rgba(92,230,154,0.3); }
   .attendance-btn.no-show    { background:rgba(255,107,107,0.12); color:var(--danger);  border-color:rgba(255,107,107,0.3); }
+  .attendance-btn.cancelled  { background:rgba(200,150,60,0.12);  color:#c89625;        border-color:rgba(200,150,60,0.3); }
   tr.cancelled td { opacity:0.5; text-decoration:line-through; }
   tr.cancelled td:last-child { text-decoration:none; opacity:1; }
 
@@ -362,13 +363,23 @@ function resSentence(r) {
 }
 
 function generateTimeSlots() {
+  // 5:00 AM through 9:00 PM in 15-minute increments
   const slots = [];
-  for (let h = 6; h < 21; h++) {
-    for (const m of [0, 30]) slots.push(`${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}`);
+  for (let h = 5; h <= 21; h++) {
+    for (const m of [0, 15, 30, 45]) {
+      if (h === 21 && m > 0) break; // stop at 9:00 PM exactly
+      slots.push(`${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}`);
+    }
   }
   return slots;
 }
 const TIME_SLOTS = generateTimeSlots();
+
+// Available ride types (used in form, calendar, color map)
+const RIDE_TYPES = ['Group','Private','Sunset','Moonlight','Contract','Stagecoach','Hayride','Train','Photoshoot','Custom'];
+
+// Card / payment types shown in the booking form
+const CARD_TYPES = ['','Visa','Mastercard','Amex','Discover','Cash','Check','Paid in Full','Needs to Pay','Comped'];
 
 // ─── Small components ─────────────────────────────────────────────────────────
 function Badge({ color = 'muted', children }) {
@@ -449,6 +460,7 @@ const EMPTY_RES = {
   adultCount:1, childCount:0, childAges:'',
   depositAmount:'', discountAmount:'', discountReason:'', cardType:'', cardLast4:'',
   specialRequests:'', notes:'', guideCount:1,
+  guideId:'', guideName:'',
   bookedToCapacity:false, textConfirmationStatus:'Pending',
   followUpStatus:'Pending', attendanceStatus:null, status:'active',
 };
@@ -465,6 +477,7 @@ const RIDE_COLORS = {
   Custom:     { bg:'rgba(148,163,184,0.10)', border:'rgba(148,163,184,0.28)', text:'#8fa0b8' },
   Kids:       { bg:'rgba(97,243,211,0.09)',  border:'rgba(97,243,211,0.30)',  text:'#3dd6b5' },
   Pony:       { bg:'rgba(255,125,209,0.10)', border:'rgba(255,125,209,0.28)', text:'#ff7dd1' },
+  Photoshoot: { bg:'rgba(255,200,80,0.10)',  border:'rgba(255,200,80,0.32)',  text:'#ffc850' },
 };
 function rideStyle(type) { return RIDE_COLORS[type] || RIDE_COLORS.Group; }
 const EMPTY_APT = { title:'', owner:'', appointmentDate:today(), startTime:'09:00', endTime:'10:00', notes:'' };
@@ -670,6 +683,23 @@ export default function App() {
   const [sidebarOpen,  setSidebarOpen]  = useState(false);
   const [showCancelled, setShowCancelled] = useState(false);
 
+  // ─ Date navigation (Dashboard + Reservations list)
+  const [dashDate,     setDashDate]     = useState(today());     // dashboard "today's reservations" date
+  const [resListDate,  setResListDate]  = useState('');          // '' = all dates; else YYYY-MM-DD
+
+  // ─ Reservation detail modal (click a reservation to view full details)
+  const [showResDetail, setShowResDetail] = useState(false);
+  const [detailRes,     setDetailRes]     = useState(null);
+
+  // ─ Send-confirmation-on-save toggle (booking form)
+  const [sendConfirmOnSave, setSendConfirmOnSave] = useState(true);
+
+  // ─ Guides
+  const [guides,        setGuides]        = useState([]);
+  const [showGuideForm, setShowGuideForm] = useState(false);
+  const [editingGuideId, setEditingGuideId] = useState(null);
+  const [guideForm,     setGuideForm]     = useState({ name:'', phone:'', email:'', employmentType:'seasonal', active:true });
+
   // ─ Activity log filters & view
   const [actSearch,     setActSearch]     = useState('');
   const [actActionType, setActActionType] = useState('All Actions');
@@ -697,6 +727,12 @@ export default function App() {
   }, [fireUser]);
 
   useEffect(() => { if (fireUser) loadAll(); }, [fireUser, loadAll]);
+
+  // Load guides whenever authenticated (used in booking form + admin)
+  useEffect(() => {
+    if (!fireUser || !isStaff) return;
+    api.listGuides().then(setGuides).catch(() => {});
+  }, [fireUser, isStaff]);
 
   // Load capacity when calDate changes
   useEffect(() => {
@@ -729,8 +765,12 @@ export default function App() {
 
   // ── Derived data ──────────────────────────────────────────────────────────────
   const todayStr = today();
-  const todayRes = reservations.filter(r => r.reservationDate === todayStr && r.status !== 'cancelled');
-  const todayRiders = todayRes.reduce((s, r) => s + (r.totalRiders || 0), 0);
+  const dashRes = reservations.filter(r => r.reservationDate === dashDate && r.status !== 'cancelled')
+                              .sort((a,b) => (a.startTime||'').localeCompare(b.startTime||''));
+  const dashRiders = dashRes.reduce((s, r) => s + (r.totalRiders || 0), 0);
+  // Keep `todayRes` for backward references — points to dashRes for the dashboard view
+  const todayRes = dashRes;
+  const todayRiders = dashRiders;
   const calRes = reservations.filter(r => r.reservationDate === calDate && r.status !== 'cancelled')
                              .sort((a,b) => (a.startTime||'').localeCompare(b.startTime||''));
   const calApt = appointments.filter(a => a.appointmentDate === calDate)
@@ -747,7 +787,11 @@ export default function App() {
       )
     : [];
   const slotBooked    = slotRes.reduce((s, r) => s + (r.totalRiders || 0), 0);
-  const formRiders    = Number(resForm.adultCount || 0) + Number(resForm.childCount || 0);
+  const slotAdults    = slotRes.reduce((s, r) => s + Number(r.adultCount || 0), 0);
+  const slotChildren  = slotRes.reduce((s, r) => s + Number(r.childCount || 0), 0);
+  const formAdults    = Number(resForm.adultCount || 0);
+  const formChildren  = Number(resForm.childCount || 0);
+  const formRiders    = formAdults + formChildren;
   const slotProjected = slotBooked + formRiders;
   const slotFillPct   = Math.min(100, Math.round(slotBooked    / maxRiders * 100));
   const slotProjPct   = Math.min(100, Math.round(slotProjected / maxRiders * 100));
@@ -757,6 +801,7 @@ export default function App() {
 
   const filteredRes = reservations.filter(r => {
     if (!showCancelled && r.status === 'cancelled') return false;
+    if (resListDate && r.reservationDate !== resListDate) return false;
     const q = search.toLowerCase();
     return !q || [r.firstName, r.lastName, r.phoneNumber, r.confirmationNumber, r.rideType]
       .some(v => v?.toLowerCase().includes(q));
@@ -781,12 +826,14 @@ export default function App() {
     setEditingResId(null);
     setResForm({ ...EMPTY_RES, reservationDate: prefillDate || today() });
     setOverrideCap(false);
+    setSendConfirmOnSave(true);  // default ON for brand-new bookings
     setShowResForm(true);
   }
   function openEditRes(r) {
     setEditingResId(r.id);
     setResForm({ ...r });
     setOverrideCap(false);
+    setSendConfirmOnSave(false);  // default OFF when editing existing
     setShowResForm(true);
   }
   async function submitRes(e) {
@@ -801,13 +848,35 @@ export default function App() {
       guideCount:      Number(resForm.guideCount    || 1),
     };
     try {
+      let savedId = editingResId;
       if (editingResId) {
         await api.updateReservation(editingResId, body);
         toast('Reservation updated');
       } else {
-        await api.createReservation(body);
+        const created = await api.createReservation(body);
+        savedId = created?.id || created?.reservationId || null;
         toast('Reservation created');
       }
+
+      // Send confirmation SMS if requested and phone present
+      if (sendConfirmOnSave && body.phoneNumber && body.phoneNumber.trim()) {
+        const tpl = SMS_TEMPLATES.find(t => t.id === 'confirm');
+        if (tpl) {
+          try {
+            // Prefer reservation_id when we have it (template fields will resolve);
+            // fall back to direct `to` phone if we don't.
+            const smsBody = savedId
+              ? { reservation_id: savedId, message: tpl.body }
+              : { to: body.phoneNumber, message: tpl.body };
+            const r = await api.sendSms(smsBody);
+            if (r.sent > 0) toast(`📲 Confirmation sent to ${body.firstName || 'guest'}`);
+            else if (r.failed > 0) toast('Confirmation SMS failed', 'error');
+          } catch (smsErr) {
+            toast('Confirmation SMS failed: ' + smsErr.message, 'error');
+          }
+        }
+      }
+
       setShowResForm(false);
       loadAll();
     } catch (err) { toast(err.message, 'error'); }
@@ -819,13 +888,66 @@ export default function App() {
   }
 
   // ── Attendance ────────────────────────────────────────────────────────────────
+  // Cycle: (none) → Checked In → No Show → Cancelled → (none)
   async function cycleAttendance(r) {
     const next = r.attendanceStatus === 'checked-in' ? 'no-show'
-                : r.attendanceStatus === 'no-show'    ? null
+                : r.attendanceStatus === 'no-show'    ? 'cancelled'
+                : r.attendanceStatus === 'cancelled'  ? null
                 : 'checked-in';
     try {
       await api.patchAttendance(r.id, next);
       setReservations(prev => prev.map(x => x.id === r.id ? { ...x, attendanceStatus: next } : x));
+    } catch (err) { toast(err.message, 'error'); }
+  }
+  // Set a specific attendance status (used by the Mark dropdown)
+  async function setAttendance(r, status) {
+    try {
+      await api.patchAttendance(r.id, status);
+      setReservations(prev => prev.map(x => x.id === r.id ? { ...x, attendanceStatus: status } : x));
+    } catch (err) { toast(err.message, 'error'); }
+  }
+
+  // ── Reservation detail modal ──────────────────────────────────────────────────
+  function openResDetail(r) {
+    setDetailRes(r);
+    setShowResDetail(true);
+  }
+
+  // ── Guides CRUD ──────────────────────────────────────────────────────────────
+  function openNewGuide() {
+    setEditingGuideId(null);
+    setGuideForm({ name:'', phone:'', email:'', employmentType:'seasonal', active:true });
+    setShowGuideForm(true);
+  }
+  function openEditGuide(g) {
+    setEditingGuideId(g.id);
+    setGuideForm({
+      name: g.name || '', phone: g.phone || '', email: g.email || '',
+      employmentType: g.employmentType || 'seasonal', active: g.active !== false,
+    });
+    setShowGuideForm(true);
+  }
+  async function submitGuide(e) {
+    e.preventDefault();
+    if (!guideForm.name.trim()) return toast('Guide name is required', 'error');
+    try {
+      if (editingGuideId) {
+        await api.updateGuide(editingGuideId, guideForm);
+        toast('Guide updated');
+      } else {
+        await api.createGuide(guideForm);
+        toast('Guide added');
+      }
+      setShowGuideForm(false);
+      api.listGuides().then(setGuides).catch(() => {});
+    } catch (err) { toast(err.message, 'error'); }
+  }
+  async function deleteGuide(g) {
+    if (!window.confirm(`Remove guide "${g.name}"? Past reservations will keep their assigned guide name.`)) return;
+    try {
+      await api.deleteGuide(g.id);
+      toast('Guide removed');
+      api.listGuides().then(setGuides).catch(() => {});
     } catch (err) { toast(err.message, 'error'); }
   }
 
@@ -973,6 +1095,7 @@ export default function App() {
   function attendanceLabel(status) {
     if (status === 'checked-in') return '✓ Checked In';
     if (status === 'no-show')    return '✗ No Show';
+    if (status === 'cancelled')  return '⊘ Cancelled';
     return '○ Mark';
   }
 
@@ -1000,7 +1123,7 @@ export default function App() {
               <Field label="Phone"><input value={resForm.phoneNumber} onChange={e => setResForm({...resForm, phoneNumber:e.target.value})} /></Field>
               <Field label="Ride Type">
                 <select value={resForm.rideType} onChange={e => setResForm({...resForm, rideType:e.target.value})}>
-                  {['Group','Private','Sunset','Moonlight','Contract','Stagecoach','Hayride','Train','Custom'].map(r => <option key={r}>{r}</option>)}
+                  {RIDE_TYPES.map(r => <option key={r}>{r}</option>)}
                 </select>
               </Field>
               {resForm.rideType === 'Custom' && (
@@ -1029,6 +1152,13 @@ export default function App() {
                   </div>
                   <div className="slot-avail-bar-track">
                     <div className="slot-avail-bar-fill" style={{width:`${slotProjPct}%`, background:slotBarColor}} />
+                  </div>
+
+                  {/* Adult / child breakdown */}
+                  <div style={{display:'flex', gap:14, fontSize:'0.78rem', opacity:0.85, marginTop:6, flexWrap:'wrap'}}>
+                    <span>👤 Adults: <strong>{slotAdults + formAdults}</strong>{formAdults > 0 ? ` (${slotAdults} + ${formAdults})` : ''}</span>
+                    <span>🧒 Children: <strong>{slotChildren + formChildren}</strong>{formChildren > 0 ? ` (${slotChildren} + ${formChildren})` : ''}</span>
+                    <span style={{marginLeft:'auto', opacity:0.7}}>Total: <strong>{slotProjected}</strong> / {maxRiders}</span>
                   </div>
                   {slotRes.length > 0 ? (
                     <div>
@@ -1065,11 +1195,31 @@ export default function App() {
               <Field label="Discount Reason"><input value={resForm.discountReason} placeholder="e.g. Birthday, Returning guest…" onChange={e => setResForm({...resForm, discountReason:e.target.value})} /></Field>
               <Field label="Card Type">
                 <select value={resForm.cardType} onChange={e => setResForm({...resForm, cardType:e.target.value})}>
-                  {['','Visa','Mastercard','Amex','Discover','Cash','Check','Pay in Full','Comped'].map(c => <option key={c} value={c}>{c||'—'}</option>)}
+                  {CARD_TYPES.map(c => <option key={c} value={c}>{c||'—'}</option>)}
                 </select>
               </Field>
               <Field label="Card Last 4"><input maxLength={4} value={resForm.cardLast4} onChange={e => setResForm({...resForm, cardLast4:e.target.value})} /></Field>
-              <Field label="Guides"><input type="number" min={0} value={resForm.guideCount} onChange={e => setResForm({...resForm, guideCount:Number(e.target.value)})} /></Field>
+              <Field label="Assigned Guide">
+                <select
+                  value={resForm.guideId || ''}
+                  onChange={e => {
+                    const g = guides.find(x => x.id === e.target.value);
+                    setResForm({
+                      ...resForm,
+                      guideId:   e.target.value,
+                      guideName: g ? g.name : '',
+                    });
+                  }}
+                >
+                  <option value="">— Unassigned —</option>
+                  {guides.filter(g => g.active !== false).map(g => (
+                    <option key={g.id} value={g.id}>
+                      {g.name}{g.employmentType === 'fulltime' ? ' (FT)' : ''}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+              <Field label="# of Guides Needed"><input type="number" min={0} value={resForm.guideCount} onChange={e => setResForm({...resForm, guideCount:Number(e.target.value)})} /></Field>
               <Field label="Text Confirmation">
                 <select value={resForm.textConfirmationStatus} onChange={e => setResForm({...resForm, textConfirmationStatus:e.target.value})}>
                   {['Pending','Sent','Confirmed'].map(s => <option key={s}>{s}</option>)}
@@ -1091,6 +1241,27 @@ export default function App() {
                   I understand this exceeds capacity — save anyway
                 </label>
               )}
+              {/* Send confirmation SMS on save */}
+              <label
+                style={{
+                  display:'flex', alignItems:'center', gap:8, fontSize:'0.85rem',
+                  color: resForm.phoneNumber ? 'var(--ink)' : 'var(--muted)',
+                  marginBottom:12, cursor: resForm.phoneNumber ? 'pointer' : 'not-allowed',
+                  padding:'8px 12px', background:'var(--card)', borderRadius:8,
+                  border:'1px solid var(--border2)',
+                }}
+                title={resForm.phoneNumber ? '' : 'Add a phone number to send a confirmation SMS'}
+              >
+                <input
+                  type="checkbox"
+                  checked={sendConfirmOnSave && !!resForm.phoneNumber}
+                  disabled={!resForm.phoneNumber}
+                  onChange={e => setSendConfirmOnSave(e.target.checked)}
+                  style={{width:15, height:15, accentColor:'var(--accent)'}}
+                />
+                📲 Send confirmation SMS to <strong>{resForm.phoneNumber || 'guest'}</strong> on save
+                {!resForm.phoneNumber && <span style={{fontSize:'0.75rem', opacity:0.7}}>(no phone number)</span>}
+              </label>
               <div style={{display:'flex', gap:10}}>
                 <Btn type="submit" variant="primary"
                   disabled={slotProjected > maxRiders && !overrideCap}>
@@ -1146,6 +1317,119 @@ export default function App() {
             <Btn variant="primary" onClick={saveCapacity}>Save</Btn>
             <Btn onClick={() => setShowCapModal(false)}>Cancel</Btn>
           </div>
+        </Modal>
+      )}
+
+      {/* Reservation detail modal — shown when a reservation row/card is clicked */}
+      {showResDetail && detailRes && (
+        <Modal
+          title={`${detailRes.firstName} ${detailRes.lastName} — ${fmtDate(detailRes.reservationDate)} ${fmtTime(detailRes.startTime)}`}
+          onClose={() => { setShowResDetail(false); setDetailRes(null); }}
+        >
+          <div style={{display:'flex', flexDirection:'column', gap:14}}>
+            {/* Status row */}
+            <div style={{display:'flex', gap:8, flexWrap:'wrap', alignItems:'center'}}>
+              <Badge color="teal">Conf# {detailRes.confirmationNumber}</Badge>
+              <span className="badge" style={{background:rideStyle(detailRes.rideType).bg, borderColor:rideStyle(detailRes.rideType).border, color:rideStyle(detailRes.rideType).text, border:'1px solid'}}>
+                {detailRes.rideType}{detailRes.rideType === 'Custom' && detailRes.customRideType ? `: ${detailRes.customRideType}` : ''}
+              </span>
+              {detailRes.status === 'cancelled' && <Badge color="red">CANCELLED</Badge>}
+              {detailRes.attendanceStatus && <Badge color={detailRes.attendanceStatus === 'checked-in' ? 'green' : detailRes.attendanceStatus === 'no-show' ? 'red' : 'yellow'}>{attendanceLabel(detailRes.attendanceStatus)}</Badge>}
+            </div>
+
+            {/* Two-column details */}
+            <div style={{display:'grid', gridTemplateColumns:'1fr 1fr', gap:'10px 20px', fontSize:'0.86rem'}}>
+              <div><strong>Phone:</strong> {detailRes.phoneNumber || <span style={{opacity:0.6}}>—</span>}</div>
+              <div><strong>Duration:</strong> {detailRes.durationMinutes} min</div>
+              <div><strong>Adults:</strong> {detailRes.adultCount || 0}</div>
+              <div><strong>Children:</strong> {detailRes.childCount || 0}{detailRes.childAges ? ` (ages ${detailRes.childAges})` : ''}</div>
+              <div><strong>Total Riders:</strong> {detailRes.totalRiders}</div>
+              <div><strong>Guides Needed:</strong> {detailRes.guideCount || 0}</div>
+              <div><strong>Assigned Guide:</strong> {detailRes.guideName || <span style={{opacity:0.6}}>Unassigned</span>}</div>
+              <div><strong>Deposit:</strong> {detailRes.depositAmount ? `$${Number(detailRes.depositAmount).toFixed(2)}` : <span style={{opacity:0.6}}>—</span>}</div>
+              <div><strong>Discount:</strong> {detailRes.discountAmount ? `$${Number(detailRes.discountAmount).toFixed(2)}${detailRes.discountReason ? ` (${detailRes.discountReason})` : ''}` : <span style={{opacity:0.6}}>—</span>}</div>
+              <div><strong>Payment:</strong> {detailRes.cardType ? `${detailRes.cardType}${detailRes.cardLast4 ? ` ···${detailRes.cardLast4}` : ''}` : <span style={{opacity:0.6}}>—</span>}</div>
+              <div><strong>Text Confirmation:</strong> {detailRes.textConfirmationStatus || 'Pending'}</div>
+              <div><strong>Follow Up:</strong> {detailRes.followUpStatus || 'Pending'}</div>
+            </div>
+
+            {/* Notes */}
+            {(detailRes.specialRequests || detailRes.notes) && (
+              <div style={{display:'flex', flexDirection:'column', gap:8, padding:12, background:'var(--card)', border:'1px solid var(--border2)', borderRadius:8}}>
+                {detailRes.specialRequests && (
+                  <div><strong style={{fontSize:'0.82rem', color:'var(--accent)'}}>Special Requests:</strong>
+                    <div style={{fontSize:'0.86rem', marginTop:4, whiteSpace:'pre-wrap'}}>{detailRes.specialRequests}</div>
+                  </div>
+                )}
+                {detailRes.notes && (
+                  <div><strong style={{fontSize:'0.82rem', color:'var(--accent2)'}}>Internal Notes:</strong>
+                    <div style={{fontSize:'0.86rem', marginTop:4, whiteSpace:'pre-wrap'}}>{detailRes.notes}</div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Action buttons */}
+            <div style={{display:'flex', gap:8, flexWrap:'wrap', borderTop:'1px solid var(--border2)', paddingTop:14}}>
+              {detailRes.status !== 'cancelled' && (
+                <Btn variant="primary" onClick={() => { setShowResDetail(false); openEditRes(detailRes); }}>✎ Edit</Btn>
+              )}
+              <Btn variant="secondary" onClick={() => { setShowResDetail(false); openMsgForRes(detailRes); }}>📲 Send SMS</Btn>
+              {detailRes.status !== 'cancelled' && (
+                <select
+                  value={detailRes.attendanceStatus || ''}
+                  onChange={async e => {
+                    const v = e.target.value || null;
+                    await setAttendance(detailRes, v);
+                    setDetailRes({ ...detailRes, attendanceStatus: v });
+                  }}
+                  style={{padding:'7px 12px', borderRadius:8, background:'var(--card)', border:'1px solid var(--border2)', color:'var(--ink)', fontSize:'0.84rem', cursor:'pointer', fontFamily:'inherit'}}
+                >
+                  <option value="">○ Mark…</option>
+                  <option value="checked-in">✓ Checked In</option>
+                  <option value="no-show">✗ No Show</option>
+                  <option value="cancelled">⊘ Cancelled</option>
+                </select>
+              )}
+              {isAdmin && detailRes.status !== 'cancelled' && (
+                <Btn variant="danger" onClick={async () => {
+                  setShowResDetail(false);
+                  await deleteRes(detailRes.id);
+                }}>Cancel Reservation</Btn>
+              )}
+              <Btn onClick={() => { setShowResDetail(false); setDetailRes(null); }}>Close</Btn>
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      {/* Guide form modal (admin) */}
+      {showGuideForm && (
+        <Modal title={editingGuideId ? 'Edit Guide' : 'Add Guide'} onClose={() => setShowGuideForm(false)}>
+          <form onSubmit={submitGuide}>
+            <div className="form-grid">
+              <Field label="Name" full><input required value={guideForm.name} onChange={e => setGuideForm({...guideForm, name:e.target.value})} /></Field>
+              <Field label="Phone"><input value={guideForm.phone} onChange={e => setGuideForm({...guideForm, phone:e.target.value})} /></Field>
+              <Field label="Email"><input type="email" value={guideForm.email} onChange={e => setGuideForm({...guideForm, email:e.target.value})} /></Field>
+              <Field label="Employment Type">
+                <select value={guideForm.employmentType} onChange={e => setGuideForm({...guideForm, employmentType:e.target.value})}>
+                  <option value="seasonal">Seasonal</option>
+                  <option value="fulltime">Full-time</option>
+                  <option value="parttime">Part-time</option>
+                </select>
+              </Field>
+              <Field label="Active">
+                <select value={guideForm.active ? 'yes' : 'no'} onChange={e => setGuideForm({...guideForm, active: e.target.value === 'yes'})}>
+                  <option value="yes">Active</option>
+                  <option value="no">Inactive (hidden from dropdowns)</option>
+                </select>
+              </Field>
+            </div>
+            <div style={{marginTop:20, display:'flex', gap:10}}>
+              <Btn type="submit" variant="primary">{editingGuideId ? 'Save Changes' : 'Add Guide'}</Btn>
+              <Btn onClick={() => setShowGuideForm(false)}>Cancel</Btn>
+            </div>
+          </form>
         </Modal>
       )}
 
@@ -1322,6 +1606,7 @@ export default function App() {
             <>
               <div className="nav-section">Admin</div>
               <NavBtn icon={ICONS.settings} label="Users"       active={view==='admin'}    onClick={() => { setView('admin');    setSidebarOpen(false); }} />
+              <NavBtn icon={ICONS.users}    label="Guides"      active={view==='guides'}   onClick={() => { setView('guides');   setSidebarOpen(false); }} />
             </>
           )}
 
@@ -1355,8 +1640,29 @@ export default function App() {
             <>
               <div className="page-title">
                 Dashboard
-                <span>{fmtDate(todayStr)}</span>
+                <span>{fmtDate(dashDate)}</span>
                 <Btn variant="ghost" size="sm" onClick={loadAll}>↻ Refresh</Btn>
+              </div>
+
+              {/* Date navigation */}
+              <div style={{display:'flex', alignItems:'center', gap:8, marginBottom:16, flexWrap:'wrap'}}>
+                <Btn variant="ghost" size="sm" onClick={() => {
+                  const d = new Date(dashDate); d.setDate(d.getDate() - 1);
+                  setDashDate(d.toISOString().slice(0,10));
+                }}>◀ Prev Day</Btn>
+                <input
+                  type="date"
+                  value={dashDate}
+                  onChange={e => setDashDate(e.target.value)}
+                  style={{background:'var(--card)', border:'1px solid var(--border2)', borderRadius:8, padding:'6px 10px', color:'var(--ink)', fontFamily:'inherit'}}
+                />
+                <Btn variant="ghost" size="sm" onClick={() => {
+                  const d = new Date(dashDate); d.setDate(d.getDate() + 1);
+                  setDashDate(d.toISOString().slice(0,10));
+                }}>Next Day ▶</Btn>
+                {dashDate !== todayStr && (
+                  <Btn variant="ghost" size="sm" onClick={() => setDashDate(todayStr)}>Jump to Today</Btn>
+                )}
               </div>
 
               {conflicts.length > 0 && (
@@ -1371,12 +1677,12 @@ export default function App() {
                   <div className="stat-value">{reservations.length}</div>
                 </div>
                 <div className="stat-card" style={{color:'var(--accent2)'}}>
-                  <div className="stat-label">Today's Reservations</div>
-                  <div className="stat-value">{todayRes.length}</div>
+                  <div className="stat-label">{dashDate === todayStr ? "Today's" : fmtDate(dashDate)} Reservations</div>
+                  <div className="stat-value">{dashRes.length}</div>
                 </div>
                 <div className="stat-card" style={{color:'var(--warn)'}}>
-                  <div className="stat-label">Today's Riders</div>
-                  <div className="stat-value">{todayRiders}</div>
+                  <div className="stat-label">{dashDate === todayStr ? "Today's" : 'Day'} Riders</div>
+                  <div className="stat-value">{dashRiders}</div>
                   <div className="stat-sub">of {maxRiders} max</div>
                 </div>
                 <div className="stat-card" style={{color:'var(--success)'}}>
@@ -1386,10 +1692,10 @@ export default function App() {
               </div>
 
               <div className="grid2">
-                <Card title="Today's Reservations" action={<Btn variant="ghost" size="sm" onClick={() => openNewRes(todayStr)}>+ New</Btn>}>
-                  {todayRes.length === 0 ? <div className="empty-state">No reservations today</div> :
-                    todayRes.map(r => (
-                      <div key={r.id} className="board-card" style={{borderLeft:`3px solid ${rideStyle(r.rideType).border}`}}>
+                <Card title={`Reservations — ${fmtDate(dashDate)}`} action={<Btn variant="ghost" size="sm" onClick={() => openNewRes(dashDate)}>+ New</Btn>}>
+                  {dashRes.length === 0 ? <div className="empty-state">No reservations on this date</div> :
+                    dashRes.map(r => (
+                      <div key={r.id} className="board-card" style={{borderLeft:`3px solid ${rideStyle(r.rideType).border}`, cursor:'pointer'}} onClick={() => openResDetail(r)}>
                         <div className="board-time">{fmtTime(r.startTime)}</div>
                         <div className="board-body">
                           <div className="board-title">{r.firstName} {r.lastName}</div>
@@ -1423,6 +1729,36 @@ export default function App() {
                 Reservations
                 <Btn variant="primary" onClick={() => openNewRes()}>+ New Reservation</Btn>
               </div>
+
+              {/* Date navigation toolbar */}
+              <div style={{display:'flex', alignItems:'center', gap:8, marginBottom:12, flexWrap:'wrap'}}>
+                <Btn variant="ghost" size="sm" onClick={() => {
+                  const base = resListDate || todayStr;
+                  const d = new Date(base); d.setDate(d.getDate() - 1);
+                  setResListDate(d.toISOString().slice(0,10));
+                }}>◀ Prev Day</Btn>
+                <input
+                  type="date"
+                  value={resListDate}
+                  onChange={e => setResListDate(e.target.value)}
+                  style={{background:'var(--card)', border:'1px solid var(--border2)', borderRadius:8, padding:'6px 10px', color:'var(--ink)', fontFamily:'inherit'}}
+                />
+                <Btn variant="ghost" size="sm" onClick={() => {
+                  const base = resListDate || todayStr;
+                  const d = new Date(base); d.setDate(d.getDate() + 1);
+                  setResListDate(d.toISOString().slice(0,10));
+                }}>Next Day ▶</Btn>
+                {resListDate && (
+                  <Btn variant="ghost" size="sm" onClick={() => setResListDate('')}>✕ Show All Dates</Btn>
+                )}
+                {!resListDate && (
+                  <Btn variant="ghost" size="sm" onClick={() => setResListDate(todayStr)}>Filter to Today</Btn>
+                )}
+                <span style={{fontSize:'0.78rem', color:'var(--muted)', marginLeft:8}}>
+                  {resListDate ? `Showing ${fmtDate(resListDate)}` : 'Showing all dates'}
+                </span>
+              </div>
+
               <div className="toolbar">
                 <div className="search-wrap">
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d={ICONS.search}/></svg>
@@ -1454,7 +1790,12 @@ export default function App() {
                     <tbody>
                       {filteredRes.length === 0 && <tr><td colSpan={9} className="empty-state">No reservations found</td></tr>}
                       {filteredRes.map(r => (
-                        <tr key={r.id} className={r.status === 'cancelled' ? 'cancelled' : ''}>
+                        <tr
+                          key={r.id}
+                          className={r.status === 'cancelled' ? 'cancelled' : ''}
+                          style={{cursor:'pointer'}}
+                          onClick={() => openResDetail(r)}
+                        >
                           <td><Badge color="teal">{r.confirmationNumber}</Badge></td>
                           <td className="td-name"><strong>{r.firstName} {r.lastName}</strong><small>{r.phoneNumber}</small></td>
                           <td>{fmtDate(r.reservationDate)}</td>
@@ -1465,15 +1806,23 @@ export default function App() {
                               {r.rideType}{r.rideType === 'Custom' && r.customRideType ? `: ${r.customRideType}` : ''}
                             </span>
                           </td>
-                          <td>
+                          <td onClick={e => e.stopPropagation()}>
                             {r.status !== 'cancelled' ? (
-                              <button className={`attendance-btn ${r.attendanceStatus||''}`} onClick={() => cycleAttendance(r)}>
-                                {attendanceLabel(r.attendanceStatus)}
-                              </button>
+                              <select
+                                value={r.attendanceStatus || ''}
+                                onChange={e => setAttendance(r, e.target.value || null)}
+                                className={`attendance-btn ${r.attendanceStatus||''}`}
+                                style={{padding:'4px 8px', borderRadius:6, background:'var(--card)', border:'1px solid var(--border2)', color:'var(--ink)', fontSize:'0.78rem', cursor:'pointer', fontFamily:'inherit'}}
+                              >
+                                <option value="">○ Mark…</option>
+                                <option value="checked-in">✓ Checked In</option>
+                                <option value="no-show">✗ No Show</option>
+                                <option value="cancelled">⊘ Cancelled</option>
+                              </select>
                             ) : <span style={{fontSize:'0.75rem', color:'var(--danger)', fontWeight:600}}>Cancelled</span>}
                           </td>
                           <td style={{maxWidth:280, fontSize:'0.77rem', color:'var(--muted)'}}>{resSentence(r)}</td>
-                          <td>
+                          <td onClick={e => e.stopPropagation()}>
                             <div className="td-actions">
                               {r.status !== 'cancelled' && <Btn variant="ghost" size="sm" onClick={() => openEditRes(r)}>Edit</Btn>}
                               <Btn variant="ghost" size="sm" onClick={() => openMsgForRes(r)}>📲</Btn>
@@ -2068,6 +2417,43 @@ export default function App() {
               </>
             );
           })()}
+
+          {/* ── ADMIN — GUIDES ── */}
+          {view === 'guides' && isAdmin && (
+            <>
+              <div className="page-title">
+                Guides
+                <Btn variant="primary" onClick={openNewGuide}>+ Add Guide</Btn>
+              </div>
+              <Card>
+                <div className="tbl-wrap">
+                  <table>
+                    <thead>
+                      <tr><th>Name</th><th>Phone</th><th>Email</th><th>Type</th><th>Status</th><th>Actions</th></tr>
+                    </thead>
+                    <tbody>
+                      {guides.length === 0 && <tr><td colSpan={6} className="empty-state">No guides yet — click "+ Add Guide" to add one</td></tr>}
+                      {guides.map(g => (
+                        <tr key={g.id} style={{opacity: g.active === false ? 0.55 : 1}}>
+                          <td style={{fontWeight:500}}>{g.name}</td>
+                          <td style={{fontSize:'0.84rem', color:'var(--muted)'}}>{g.phone || '—'}</td>
+                          <td style={{fontSize:'0.84rem', color:'var(--muted)'}}>{g.email || '—'}</td>
+                          <td><Badge color={g.employmentType === 'fulltime' ? 'green' : 'teal'}>{g.employmentType === 'fulltime' ? 'Full-time' : g.employmentType === 'parttime' ? 'Part-time' : 'Seasonal'}</Badge></td>
+                          <td>{g.active === false ? <Badge color="red">Inactive</Badge> : <Badge color="green">Active</Badge>}</td>
+                          <td>
+                            <div style={{display:'flex', gap:6, flexWrap:'wrap'}}>
+                              <Btn variant="ghost" size="sm" onClick={() => openEditGuide(g)}>Edit</Btn>
+                              <Btn variant="danger" size="sm" onClick={() => deleteGuide(g)}>Remove</Btn>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </Card>
+            </>
+          )}
 
           {/* ── ADMIN — USER MANAGEMENT ── */}
           {view === 'admin' && isAdmin && (

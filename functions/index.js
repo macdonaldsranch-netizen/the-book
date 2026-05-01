@@ -353,6 +353,69 @@ app.put('/api/settings', verifyToken, requireAdmin, async (req, res) => {
 });
 
 // ══════════════════════════════════════════════════════════════════════════════
+// GUIDES (staff can read, admin manages)
+// ══════════════════════════════════════════════════════════════════════════════
+app.get('/api/guides', verifyToken, requireStaff, async (req, res) => {
+  try {
+    const snap = await db.collection('guides').orderBy('name').get();
+    res.json(snap.docs.map(docToObj));
+  } catch (e) {
+    // orderBy may fail if index missing; fall back to unordered
+    try {
+      const snap = await db.collection('guides').get();
+      res.json(snap.docs.map(docToObj));
+    } catch (e2) {
+      res.status(500).json({ detail: e2.message });
+    }
+  }
+});
+
+app.post('/api/guides', verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const { name, phone = '', email = '', employmentType = 'seasonal', active = true } = req.body;
+    if (!name || !name.trim()) return res.status(400).json({ detail: 'name required' });
+    const ref = await db.collection('guides').add({
+      name: name.trim(), phone, email, employmentType, active,
+      createdAt: nowIso(), createdBy: req.user.email,
+    });
+    await log('Guide added', name, req.user.email);
+    res.status(201).json({ id: ref.id, name, phone, email, employmentType, active });
+  } catch (e) {
+    res.status(400).json({ detail: e.message });
+  }
+});
+
+app.put('/api/guides/:id', verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const { name, phone, email, employmentType, active } = req.body;
+    const update = {};
+    if (name !== undefined) update.name = name;
+    if (phone !== undefined) update.phone = phone;
+    if (email !== undefined) update.email = email;
+    if (employmentType !== undefined) update.employmentType = employmentType;
+    if (active !== undefined) update.active = active;
+    update.updatedAt = nowIso();
+    await db.collection('guides').doc(req.params.id).update(update);
+    await log('Guide updated', name || req.params.id, req.user.email);
+    res.json({ status: 'updated' });
+  } catch (e) {
+    res.status(400).json({ detail: e.message });
+  }
+});
+
+app.delete('/api/guides/:id', verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const snap = await db.collection('guides').doc(req.params.id).get();
+    const name = snap.exists ? snap.data().name : req.params.id;
+    await db.collection('guides').doc(req.params.id).delete();
+    await log('Guide removed', name, req.user.email);
+    res.json({ status: 'deleted' });
+  } catch (e) {
+    res.status(400).json({ detail: e.message });
+  }
+});
+
+// ══════════════════════════════════════════════════════════════════════════════
 // USER MANAGEMENT (admin only)
 // ══════════════════════════════════════════════════════════════════════════════
 app.get('/api/users', verifyToken, requireAdmin, async (req, res) => {
