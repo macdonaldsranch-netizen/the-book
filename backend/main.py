@@ -6,7 +6,7 @@ Auth             : Firebase Authentication (ID token in Authorization: Bearer he
 """
 
 import os
-from datetime import datetime, date, timezone
+from datetime import datetime, date, timezone, timedelta
 from typing import Optional
 from functools import wraps
 
@@ -259,7 +259,7 @@ def update_reservation(doc_id: str, body: ReservationIn, token: TokenData = Depe
 async def update_attendance(doc_id: str, request: Request, token: TokenData = Depends(require_staff)):
     body = await request.json()
     status = body.get("attendanceStatus")
-    if status not in (None, "checked-in", "no-show"):
+    if status not in (None, "checked-in", "no-show", "cancelled"):
         raise HTTPException(status_code=400, detail="Invalid attendanceStatus")
     ref = db.collection("reservations").document(doc_id)
     snap = ref.get()
@@ -527,15 +527,42 @@ class SmsIn(BaseModel):
     date_from:      Optional[str]       = None   # date-range start
     date_to:        Optional[str]       = None   # date-range end
 
+def _check_in_time(start_time: str, lead_minutes: int = 45) -> str:
+    """Return HH:MM that is `lead_minutes` before start_time. '' if invalid."""
+    if not start_time or ":" not in start_time:
+        return ""
+    try:
+        h, m = [int(x) for x in start_time.split(":")[:2]]
+        total = h * 60 + m - lead_minutes
+        if total < 0:
+            total = 0
+        return f"{total // 60:02d}:{total % 60:02d}"
+    except Exception:
+        return ""
+
+def _fmt_time_12h(t: str) -> str:
+    if not t or ":" not in t:
+        return ""
+    try:
+        h, m = [int(x) for x in t.split(":")[:2]]
+        ampm = "PM" if h >= 12 else "AM"
+        h12 = h % 12 or 12
+        return f"{h12}:{m:02d} {ampm}"
+    except Exception:
+        return t
+
 def _resolve_template(message: str, res: dict) -> str:
     """Replace {field} tokens in message with values from a reservation dict."""
+    start_time = res.get("startTime", "") or ""
+    check_in   = _check_in_time(start_time, 45)
     replacements = {
         "firstName":          res.get("firstName", ""),
         "lastName":           res.get("lastName", ""),
         "fullName":           f"{res.get('firstName','')} {res.get('lastName','')}".strip(),
         "confirmationNumber": res.get("confirmationNumber", ""),
         "reservationDate":    res.get("reservationDate", ""),
-        "startTime":          res.get("startTime", ""),
+        "startTime":          _fmt_time_12h(start_time) or start_time,
+        "checkInTime":        _fmt_time_12h(check_in) or check_in,
         "rideType":           res.get("rideType", ""),
         "totalRiders":        str(res.get("totalRiders", "")),
         "adultCount":         str(res.get("adultCount", "")),
@@ -659,6 +686,133 @@ def send_sms(body: SmsIn, token: TokenData = Depends(require_staff)):
          f"{sent} message(s) sent | selector: "
          f"{'to=' + body.to if body.to else 'date=' + (body.date or '') + ' time=' + (body.time or '') + ' range=' + (body.time_from or '') + '-' + (body.time_to or '') + ' dates=' + (body.date_from or '') + '-' + (body.date_to or '') + ' res=' + (body.reservation_id or '')}",
          token.email)
+
+    return {"sent": sent, "failed": failed, "skipped": skipped}
+
+# ══════════════════════════════════════════════════════════════════════════════
+# SMS TEMPLATES (editable, persisted in Firestore)
+# ══════════════════════════════════════════════════════════════════════════════
+
+DEFAULT_SMS_TEMPLATES = [
+    {
+        "id": "confirm",
+        "label": "Booking Confirmation",
+        "icon": "✅",
+        "body": (
+            "Hi {firstName}! Your {rideType} ride is confirmed for "
+            "{reservationDate} at {startTime} ({totalRiders} riders). "
+            "Please arrive by {checkInTime} (45 min early) for check-in. "
+            "Confirmation: {confirmationNumber}. — MacDonald's Ranch!"
+        ),
+        "isDefault": True,
+    },
+    {
+        "id": "reminder",
+        "label": "Day-Before Reminder",
+        "icon": "🔔",
+        "body": (
+            "Hi {firstName}, reminder: your {rideType} ride is tomorrow at {startTime}. "
+            "Please arrive by {checkInTime} (45 min before ride time) to check in. "
+            "Conf#: {confirmationNumber}."
+        ),
+        "isDefault": True,
+    },
+    {
+        "id": "weather",
+        "label": "Weather / Delay Notice",
+        "icon": "⛅",
+        "body": (
+            "Hi {firstName}, heads-up: we're monitoring weather for your ride on "
+            "{reservationDate} at {startTime}. We'll reach out if anything changes."
+        ),
+        "isDefault": True,
+    },
+    {
+        "id": "cancelled",
+        "label": "Cancellation Notice",
+        "icon": "❌",
+        "body": (
+            "Hi {firstName}, unfortunately your {rideType} ride on {reservationDate} at {startTime} "
+            "(Conf# {confirmationNumber}) has been cancelled. Please contact us to reschedule."
+        ),
+        "isDefault": True,
+    },
+    {
+        "id": "followup",
+        "label": "Post-Ride Follow-Up",
+        "icon": "⭐",
+        "body": (
+            "Hi {firstName}, thanks for riding with us! We hope you had a great time on the "
+            "{rideType} ride. We'd love a review — see you again soon! – MacDonald's Ranch"
+        ),
+        "isDefault": True,
+    },
+]
+
+def _seed_default_templates():
+    """Create the default templates in Firestore on first read if they don't exist."""
+    coll = db.collection("smsTemplates")
+    for tpl in DEFAULT_SMS_TEMPLATES:
+        ref = coll.document(tpl["id"])
+        if not ref.get().exists:
+            ref.set({**tpl, "createdAt": _now_iso(), "updatedAt": _now_iso()})
+
+class SmsTemplateIn(BaseModel):
+    label:     str
+    icon:      str = "✏️"
+    body:      str
+
+@app.get("/api/sms/templates")
+def list_sms_templates(token: TokenData = Depends(require_staff)):
+    _seed_default_templates()
+    docs = db.collection("smsTemplates").order_by("label").stream()
+    return [_doc_to_dict(d) for d in docs]
+
+@app.post("/api/sms/templates", status_code=201)
+def create_sms_template(body: SmsTemplateIn, token: TokenData = Depends(require_staff)):
+    if not body.label.strip():
+        raise HTTPException(status_code=400, detail="Template label is required")
+    data = body.model_dump()
+    data["isDefault"] = False
+    data["createdAt"] = _now_iso()
+    data["updatedAt"] = _now_iso()
+    data["createdBy"] = token.uid
+    _, ref = db.collection("smsTemplates").add(data)
+    _log("SMS template created", body.label, token.email)
+    data["id"] = ref.id
+    return data
+
+@app.put("/api/sms/templates/{tpl_id}")
+def update_sms_template(tpl_id: str, body: SmsTemplateIn, token: TokenData = Depends(require_staff)):
+    ref = db.collection("smsTemplates").document(tpl_id)
+    snap = ref.get()
+    if not snap.exists:
+        raise HTTPException(status_code=404, detail="Template not found")
+    data = body.model_dump()
+    data["updatedAt"] = _now_iso()
+    data["updatedBy"] = token.uid
+    ref.update(data)
+    _log("SMS template updated", body.label, token.email)
+    return {"status": "updated", "id": tpl_id}
+
+@app.delete("/api/sms/templates/{tpl_id}")
+def delete_sms_template(tpl_id: str, token: TokenData = Depends(require_staff)):
+    ref = db.collection("smsTemplates").document(tpl_id)
+    snap = ref.get()
+    if not snap.exists:
+        raise HTTPException(status_code=404, detail="Template not found")
+    existing = snap.to_dict() or {}
+    if existing.get("isDefault"):
+        # Reset built-in templates to factory body instead of deleting
+        for tpl in DEFAULT_SMS_TEMPLATES:
+            if tpl["id"] == tpl_id:
+                ref.set({**tpl, "updatedAt": _now_iso()})
+                _log("SMS template reset to default", existing.get("label", tpl_id), token.email)
+                return {"status": "reset", "id": tpl_id}
+        raise HTTPException(status_code=400, detail="Cannot delete a default template")
+    ref.delete()
+    _log("SMS template deleted", existing.get("label", tpl_id), token.email)
+    return {"status": "deleted"}
 
 # ── Health check ───────────────────────────────────────────────────────────────
 @app.get("/api/health")

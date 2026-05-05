@@ -77,3 +77,9 @@ export const deleteGuide         = (id)            => request('DELETE', `/guides
 //       { message, time_from?, time_to? } | { message, date_from?, date_to? } |
 //       { message, reservation_id? }
 export const sendSms             = (body)          => request('POST',   '/sms/send', body);
+
+// ── SMS Templates (staff + admin) ────────────────────────────────────────────
+export const listSmsTemplates    = ()              => request('GET',    '/sms/templates');
+export const createSmsTemplate   = (body)          => request('POST',   '/sms/templates', body);
+export const updateSmsTemplate   = (id, body)      => request('PUT',    `/sms/templates/${id}`, body);
+export const deleteSmsTemplate   = (id)            => request('DELETE', `/sms/templates/${id}`);

@@ -370,6 +370,20 @@ function fmtTime(t) {
   return `${h % 12 || 12}:${String(m).padStart(2,'0')} ${ampm}`;
 }
 
+/** Subtract `mins` from an HH:MM time string. Returns HH:MM (clamped at 00:00). */
+function subtractMinutes(timeStr, mins) {
+  if (!timeStr || !timeStr.includes(':')) return '';
+  const [h, m] = timeStr.split(':').map(Number);
+  let total = h * 60 + m - mins;
+  if (total < 0) total = 0;
+  return `${String(Math.floor(total / 60)).padStart(2,'0')}:${String(total % 60).padStart(2,'0')}`;
+}
+
+/** 45 min before ride start — guests arrive by this time. */
+function checkInTimeFor(startTime) {
+  return subtractMinutes(startTime, 45);
+}
+
 function fmtTs(ts) {
   if (!ts) return '';
   try { return new Date(ts).toLocaleString(); } catch { return ts; }
@@ -417,9 +431,9 @@ const CARD_TYPES = ['','Visa','Mastercard','Amex','Discover','Cash','Check','Pai
 function Badge({ color = 'muted', children }) {
   return <span className={`badge badge-${color}`}>{children}</span>;
 }
-function Btn({ variant = 'secondary', size = '', onClick, type = 'button', disabled, children }) {
+function Btn({ variant = 'secondary', size = '', onClick, type = 'button', disabled, style, title, children }) {
   return (
-    <button type={type} className={`btn btn-${variant}${size ? ' btn-'+size : ''}`} onClick={onClick} disabled={disabled}>
+    <button type={type} className={`btn btn-${variant}${size ? ' btn-'+size : ''}`} onClick={onClick} disabled={disabled} style={style} title={title}>
       {children}
     </button>
   );
@@ -592,19 +606,19 @@ function Modal({ title, onClose, children }) {
   );
 }
 
-// ── SMS message templates ─────────────────────────────────────────────────────
-const SMS_TEMPLATES = [
+// ── SMS message templates (default seed; runtime list is loaded from backend) ──
+const DEFAULT_SMS_TEMPLATES = [
   {
     id: 'confirm',
     label: 'Booking Confirmation',
     icon: '✅',
-    body: 'Hi {firstName}! Your {rideType} ride is confirmed for {reservationDate} at {startTime} ({totalRiders} riders). Confirmation: {confirmationNumber}. See you soon — MacDonald\'s Ranch!',
+    body: 'Hi {firstName}! Your {rideType} ride is confirmed for {reservationDate} at {startTime} ({totalRiders} riders). Please arrive by {checkInTime} (45 min early) for check-in. Confirmation: {confirmationNumber}. — MacDonald\'s Ranch!',
   },
   {
     id: 'reminder',
     label: 'Day-Before Reminder',
     icon: '🔔',
-    body: 'Hi {firstName}, just a friendly reminder — your {rideType} ride is tomorrow at {startTime}. Please arrive 15 min early. Questions? Call us! Conf#: {confirmationNumber}.',
+    body: 'Hi {firstName}, reminder: your {rideType} ride is tomorrow at {startTime}. Please arrive by {checkInTime} (45 min before ride time) to check in. Conf#: {confirmationNumber}.',
   },
   {
     id: 'weather',
@@ -737,6 +751,12 @@ export default function App() {
   const [editingGuideId, setEditingGuideId] = useState(null);
   const [guideForm,     setGuideForm]     = useState({ name:'', phone:'', email:'', employmentType:'seasonal', active:true });
 
+  // ─ SMS templates (loaded from backend; fall back to defaults)
+  const [smsTemplates,    setSmsTemplates]    = useState(DEFAULT_SMS_TEMPLATES);
+  const [showTplManager,  setShowTplManager]  = useState(false);
+  const [editingTpl,      setEditingTpl]      = useState(null);  // {id?, label, icon, body, isDefault}
+  const [tplSaving,       setTplSaving]       = useState(false);
+
   // ─ Activity log filters & view
   const [actSearch,     setActSearch]     = useState('');
   const [actActionType, setActActionType] = useState('All Actions');
@@ -770,6 +790,18 @@ export default function App() {
     if (!fireUser || !isStaff) return;
     api.listGuides().then(setGuides).catch(() => {});
   }, [fireUser, isStaff]);
+
+  // Load SMS templates from backend (always include the synthetic 'custom' option)
+  const loadTemplates = useCallback(async () => {
+    if (!fireUser || !isStaff) return;
+    try {
+      const list = await api.listSmsTemplates();
+      // ensure a 'custom' placeholder is always available in the picker
+      const withCustom = [...list, { id:'custom', label:'Custom Message', icon:'✏️', body:'', isDefault:false }];
+      setSmsTemplates(withCustom);
+    } catch (_) { /* keep defaults */ }
+  }, [fireUser, isStaff]);
+  useEffect(() => { loadTemplates(); }, [loadTemplates]);
 
   // Load capacity when calDate changes
   useEffect(() => {
@@ -907,7 +939,7 @@ export default function App() {
 
       // Send confirmation SMS if requested and phone present
       if (sendConfirmOnSave && body.phoneNumber && body.phoneNumber.trim()) {
-        const tpl = SMS_TEMPLATES.find(t => t.id === confirmTemplateId) || SMS_TEMPLATES.find(t => t.id === 'confirm');
+        const tpl = smsTemplates.find(t => t.id === confirmTemplateId) || smsTemplates.find(t => t.id === 'confirm');
         if (tpl && tpl.body) {
           try {
             // Prefer reservation_id when we have it (template fields will resolve);
@@ -1335,13 +1367,13 @@ export default function App() {
                         onChange={e => setConfirmTemplateId(e.target.value)}
                         style={{padding:'5px 9px', borderRadius:6, background:'var(--bg2)', border:'1px solid var(--border2)', color:'var(--ink)', fontFamily:'inherit', fontSize:'0.83rem'}}
                       >
-                        {SMS_TEMPLATES.filter(t => t.id !== 'custom').map(t => (
+                        {smsTemplates.filter(t => t.id !== 'custom').map(t => (
                           <option key={t.id} value={t.id}>{t.icon} {t.label}</option>
                         ))}
                       </select>
                     </div>
                     {(() => {
-                      const tpl = SMS_TEMPLATES.find(t => t.id === confirmTemplateId);
+                      const tpl = smsTemplates.find(t => t.id === confirmTemplateId);
                       return tpl?.body ? (
                         <div style={{fontSize:'0.74rem', color:'var(--muted)', fontStyle:'italic', padding:'6px 8px', background:'var(--bg2)', borderRadius:6, border:'1px solid var(--border2)', whiteSpace:'pre-wrap'}}>
                           Preview: {tpl.body}
@@ -1363,9 +1395,59 @@ export default function App() {
         </Modal>
       )}
 
+      {/* SMS Template editor modal */}
+      {showTplManager && editingTpl && (
+        <Modal title={editingTpl.id ? `Edit Template: ${editingTpl.label}` : 'New SMS Template'} onClose={() => { setShowTplManager(false); setEditingTpl(null); }}>
+          <form onSubmit={async e => {
+            e.preventDefault();
+            if (!editingTpl.label.trim() || !editingTpl.body.trim()) { toast('Label and body are required', 'error'); return; }
+            setTplSaving(true);
+            try {
+              const payload = { label: editingTpl.label.trim(), icon: editingTpl.icon || '✏️', body: editingTpl.body };
+              if (editingTpl.id) await api.updateSmsTemplate(editingTpl.id, payload);
+              else                await api.createSmsTemplate(payload);
+              await loadTemplates();
+              toast(editingTpl.id ? 'Template saved' : 'Template created');
+              setShowTplManager(false); setEditingTpl(null);
+            } catch (err) { toast(err.message, 'error'); }
+            finally { setTplSaving(false); }
+          }}>
+            <div className="form-grid">
+              <Field label="Icon">
+                <input value={editingTpl.icon} maxLength={4}
+                  onChange={e => setEditingTpl({...editingTpl, icon:e.target.value})}
+                  style={{fontSize:'1.2rem', textAlign:'center'}} />
+              </Field>
+              <Field label="Label">
+                <input required value={editingTpl.label}
+                  onChange={e => setEditingTpl({...editingTpl, label:e.target.value})} />
+              </Field>
+              <Field label="Message Body" full>
+                <textarea required rows={6} value={editingTpl.body}
+                  onChange={e => setEditingTpl({...editingTpl, body:e.target.value})}
+                  style={{fontFamily:'inherit', resize:'vertical'}} />
+                <div style={{fontSize:'0.72rem', color:'var(--muted)', marginTop:6, lineHeight:1.5}}>
+                  Available tokens:&nbsp;
+                  {['firstName','lastName','rideType','reservationDate','startTime','checkInTime','totalRiders','confirmationNumber','phoneNumber'].map(tok => (
+                    <code key={tok}
+                      style={{cursor:'pointer', padding:'1px 6px', borderRadius:4, background:'var(--card2)', marginRight:4, color:'var(--accent)'}}
+                      onClick={() => setEditingTpl(t => ({...t, body: (t.body || '') + `{${tok}}`}))}
+                      title="Click to insert">{`{${tok}}`}</code>
+                  ))}
+                </div>
+              </Field>
+            </div>
+            <div style={{display:'flex', gap:8, justifyContent:'flex-end', marginTop:14}}>
+              <Btn variant="ghost" onClick={() => { setShowTplManager(false); setEditingTpl(null); }}>Cancel</Btn>
+              <Btn variant="primary" type="submit" disabled={tplSaving}>{tplSaving ? 'Saving…' : (editingTpl.id ? 'Save Changes' : 'Create Template')}</Btn>
+            </div>
+          </form>
+        </Modal>
+      )}
+
       {/* Appointment form modal */}
       {showAptForm && (
-        <Modal title={editingAptId ? 'Edit Appointment' : 'New Appointment'} onClose={() => setShowAptForm(false)}>
+        <Modal title={editingAptId ? 'Edit Event / Appointment' : 'New Event / Appointment'} onClose={() => setShowAptForm(false)}>
           <form onSubmit={submitApt}>
             <div className="form-grid">
               <Field label="Title" full><input required value={aptForm.title} onChange={e => setAptForm({...aptForm, title:e.target.value})} /></Field>
@@ -1595,7 +1677,7 @@ export default function App() {
           <div style={{marginBottom:12}}>
             <div style={{fontSize:'0.75rem', color:'var(--muted)', marginBottom:6, fontWeight:600, textTransform:'uppercase', letterSpacing:'0.06em'}}>Template</div>
             <div style={{display:'flex', flexWrap:'wrap', gap:6}}>
-              {SMS_TEMPLATES.map(t => (
+              {smsTemplates.map(t => (
                 <button key={t.id} type="button"
                   style={{padding:'5px 12px', borderRadius:8, border:'1px solid',
                     borderColor: quickMsgTpl === t.id ? 'var(--accent)' : 'var(--border2)',
@@ -1618,9 +1700,10 @@ export default function App() {
             setMsgSending(true);
             try {
               const fields = ['firstName','lastName','phoneNumber','confirmationNumber','rideType',
-                'reservationDate','startTime','durationMinutes','adultCount','childCount','totalRiders','specialRequests'];
+                'reservationDate','startTime','checkInTime','durationMinutes','adultCount','childCount','totalRiders','specialRequests'];
+              const ctx = { ...msgModalRes, checkInTime: checkInTimeFor(msgModalRes.startTime) };
               const resolved = fields.reduce(
-                (s, k) => s.replace(new RegExp(`\\{${k}\\}`, 'g'), msgModalRes[k] ?? ''), quickMsgText
+                (s, k) => s.replace(new RegExp(`\\{${k}\\}`, 'g'), ctx[k] ?? ''), quickMsgText
               );
               const res = await api.sendSms({ message: resolved, reservation_id: msgModalRes.id });
               if (res.failed > 0) toast('⚠ Message failed to send', 'error');
@@ -1642,9 +1725,12 @@ export default function App() {
             {quickMsgText && msgModalRes && (
               <Field label="Preview (with this guest's data)" full>
                 <div className="msg-preview">
-                  {['firstName','lastName','phoneNumber','confirmationNumber','rideType',
-                    'reservationDate','startTime','durationMinutes','adultCount','childCount','totalRiders','specialRequests']
-                    .reduce((s, k) => s.replace(new RegExp(`\\{${k}\\}`, 'g'), msgModalRes[k] ?? ''), quickMsgText)}
+                  {(() => {
+                    const ctx = { ...msgModalRes, checkInTime: checkInTimeFor(msgModalRes.startTime) };
+                    return ['firstName','lastName','phoneNumber','confirmationNumber','rideType',
+                      'reservationDate','startTime','checkInTime','durationMinutes','adultCount','childCount','totalRiders','specialRequests']
+                      .reduce((s, k) => s.replace(new RegExp(`\\{${k}\\}`, 'g'), ctx[k] ?? ''), quickMsgText);
+                  })()}
                 </div>
               </Field>
             )}
@@ -1687,7 +1773,7 @@ export default function App() {
           <div className="nav-section">Menu</div>
           <NavBtn icon={ICONS.dashboard} label="Dashboard"    active={view==='dashboard'}    onClick={() => { setView('dashboard');    setSidebarOpen(false); }} />
           <NavBtn icon={ICONS.list}      label="Reservations" active={view==='reservations'} onClick={() => { setView('reservations'); setSidebarOpen(false); }} />
-          <NavBtn icon={ICONS.users}     label="Staff Appts"  active={view==='appointments'} onClick={() => { setView('appointments'); setSidebarOpen(false); }} />
+          <NavBtn icon={ICONS.users}     label="Events / Appts" active={view==='appointments'} onClick={() => { setView('appointments'); setSidebarOpen(false); }} />
           <NavBtn icon={ICONS.calendar}  label="Day View"     active={view==='calendar'}     onClick={() => { setView('calendar');     setSidebarOpen(false); }} />
           <NavBtn icon={ICONS.calendar}  label="Calendar"     active={view==='monthCal'}     onClick={() => { setView('monthCal');     setSidebarOpen(false); }} />
           <NavBtn icon={ICONS.message}   label="Messages"     active={view==='messages'}     onClick={() => { setView('messages');     setSidebarOpen(false); }} />
@@ -1776,7 +1862,7 @@ export default function App() {
                   <div className="stat-sub">of {maxRiders} max</div>
                 </div>
                 <div className="stat-card" style={{color:'var(--success)'}}>
-                  <div className="stat-label">Staff Appointments</div>
+                  <div className="stat-label">Events / Appointments</div>
                   <div className="stat-value">{appointments.length}</div>
                 </div>
               </div>
@@ -1932,8 +2018,8 @@ export default function App() {
           {view === 'appointments' && (
             <>
               <div className="page-title">
-                Staff Appointments
-                <Btn variant="primary" onClick={() => openNewApt()}>+ New Appointment</Btn>
+                Events / Appointments
+                <Btn variant="primary" onClick={() => openNewApt()}>+ New Event/Appt</Btn>
               </div>
               <Card>
                 <div className="tbl-wrap">
@@ -2142,7 +2228,7 @@ export default function App() {
                   </button>
                 )}
                 <Btn variant="ghost" size="sm" onClick={() => openNewRes(calDate)}>+ Reservation</Btn>
-                <Btn variant="ghost" size="sm" onClick={() => openNewApt(calDate)}>+ Staff Appt</Btn>
+                <Btn variant="ghost" size="sm" onClick={() => openNewApt(calDate)}>+ Event/Appt</Btn>
               </div>
 
               {/* Day totals summary bar */}
@@ -2185,18 +2271,52 @@ export default function App() {
                       <div className="cal-cell">
                         {slotRes.map(r => (
                           <div key={r.id} className={`cal-res-pill${r.bookedToCapacity?' booked':''}`}
-                            style={{background:rideStyle(r.rideType).bg, borderColor:rideStyle(r.rideType).border}}>
+                            style={{background:rideStyle(r.rideType).bg, borderColor:rideStyle(r.rideType).border, cursor:'pointer'}}
+                            onClick={() => openResDetail(r)}
+                            title="Click for full details / edit / cancel">
                             <strong>{r.firstName} {r.lastName}</strong>
                             <span style={{marginLeft:6, fontSize:'0.70rem', fontWeight:600, color:rideStyle(r.rideType).text}}>{r.rideType}{r.rideType==='Custom'&&r.customRideType?`: ${r.customRideType}`:''}</span>
                             <div className="cal-res-sentence">{resSentence(r)}</div>
-                            <button className={`attendance-btn ${r.attendanceStatus||''}`} onClick={() => cycleAttendance(r)}>
-                              {attendanceLabel(r.attendanceStatus)}
-                            </button>
-                            {r.phoneNumber && (
-                              <button style={{marginLeft:6, fontSize:'0.72rem', background:'transparent', border:'none', cursor:'pointer', color:'var(--accent)', padding:'2px 4px'}}
-                                onClick={() => openMsgForRes(r)}
-                                title={`Send message to ${r.firstName}`}>📲</button>
-                            )}
+                            <div style={{fontSize:'0.72rem', color:'var(--muted)', marginTop:2}}>
+                              ⏰ Check-in by <strong style={{color:'var(--accent)'}}>{fmtTime(checkInTimeFor(r.startTime))}</strong> (45 min early)
+                            </div>
+                            <div style={{display:'flex', gap:6, alignItems:'center', flexWrap:'wrap', marginTop:4}} onClick={e => e.stopPropagation()}>
+                              <button className={`attendance-btn ${r.attendanceStatus||''}`} onClick={() => cycleAttendance(r)}>
+                                {attendanceLabel(r.attendanceStatus)}
+                              </button>
+                              {/* Inline guide assignment */}
+                              <select
+                                value={(r.guideIds && r.guideIds[0]) || r.guideId || ''}
+                                onChange={async e => {
+                                  const gid = e.target.value;
+                                  const g = guides.find(x => x.id === gid);
+                                  const updated = {
+                                    ...r,
+                                    guideIds:   gid ? [gid] : [],
+                                    guideNames: g ? [g.name] : [],
+                                    guideId:    gid,
+                                    guideName:  g ? g.name : '',
+                                  };
+                                  try {
+                                    await api.updateReservation(r.id, updated);
+                                    setReservations(prev => prev.map(x => x.id === r.id ? updated : x));
+                                    toast(g ? `Guide ${g.name} assigned` : 'Guide cleared');
+                                  } catch (err) { toast(err.message, 'error'); }
+                                }}
+                                style={{fontSize:'0.70rem', padding:'2px 6px', borderRadius:6, background:'var(--card)', border:'1px solid var(--border2)', color:'var(--ink)', fontFamily:'inherit', maxWidth:140}}
+                                title="Assign guide"
+                              >
+                                <option value="">👤 Assign guide…</option>
+                                {guides.filter(g => g.active !== false).map(g => (
+                                  <option key={g.id} value={g.id}>{g.name}</option>
+                                ))}
+                              </select>
+                              {r.phoneNumber && (
+                                <button style={{fontSize:'0.72rem', background:'transparent', border:'none', cursor:'pointer', color:'var(--accent)', padding:'2px 4px'}}
+                                  onClick={() => openMsgForRes(r)}
+                                  title={`Send message to ${r.firstName}`}>📲</button>
+                              )}
+                            </div>
                           </div>
                         ))}
                       </div>
@@ -2229,10 +2349,11 @@ export default function App() {
             function resolvePreview(text, r) {
               if (!r) return text;
               const fields = {firstName:'', lastName:'', phoneNumber:'', confirmationNumber:'', rideType:'',
-                reservationDate:'', startTime:'', durationMinutes:'', adultCount:'', childCount:'',
+                reservationDate:'', startTime:'', checkInTime:'', durationMinutes:'', adultCount:'', childCount:'',
                 totalRiders:'', specialRequests:'', guideCount:''};
+              const ctx = { ...r, checkInTime: r.checkInTime || checkInTimeFor(r.startTime) };
               return Object.keys(fields).reduce(
-                (s, k) => s.replace(new RegExp(`\\{${k}\\}`, 'g'), r[k] ?? ''), text
+                (s, k) => s.replace(new RegExp(`\\{${k}\\}`, 'g'), ctx[k] ?? ''), text
               );
             }
             // compute recipients list for preview
@@ -2259,7 +2380,7 @@ export default function App() {
             const unreachable = recipientList.filter(r => !r.phoneNumber);
             const previewRes = reachable[0] || null;
             const ALL_TOKENS = ['firstName','lastName','phoneNumber','confirmationNumber','rideType',
-              'reservationDate','startTime','totalRiders','adultCount','childCount','specialRequests'];
+              'reservationDate','startTime','checkInTime','totalRiders','adultCount','childCount','specialRequests'];
 
             return (
               <>
@@ -2268,10 +2389,45 @@ export default function App() {
                   <span>Send SMS to guests via Twilio</span>
                 </div>
 
+                {/* ── Saved Templates manager ─────────────────────────────── */}
+                <Card title="Saved Templates"
+                      action={
+                        <Btn variant="ghost" size="sm" onClick={() => { setEditingTpl({ label:'', icon:'✏️', body:'', isDefault:false }); setShowTplManager(true); }}>
+                          + New Template
+                        </Btn>
+                      }>
+                  <div style={{display:'grid', gridTemplateColumns:'repeat(auto-fill, minmax(220px, 1fr))', gap:8}}>
+                    {smsTemplates.filter(t => t.id !== 'custom').map(t => (
+                      <div key={t.id} style={{padding:'10px 12px', border:'1px solid var(--border2)', borderRadius:10, background:'var(--card2)', display:'flex', flexDirection:'column', gap:6}}>
+                        <div style={{display:'flex', alignItems:'center', justifyContent:'space-between', gap:6}}>
+                          <strong style={{fontSize:'0.88rem'}}>{t.icon} {t.label}</strong>
+                          {t.isDefault && <span style={{fontSize:'0.64rem', color:'var(--muted)', background:'var(--card)', padding:'1px 6px', borderRadius:4, border:'1px solid var(--border2)'}}>BUILT-IN</span>}
+                        </div>
+                        <div style={{fontSize:'0.74rem', color:'var(--muted)', lineHeight:1.4, maxHeight:50, overflow:'hidden', textOverflow:'ellipsis'}}>
+                          {t.body || <em>(empty)</em>}
+                        </div>
+                        <div style={{display:'flex', gap:6, marginTop:4}}>
+                          <Btn variant="ghost" size="sm" onClick={() => { setEditingTpl({ ...t }); setShowTplManager(true); }}>Edit</Btn>
+                          <Btn variant="ghost" size="sm" onClick={() => setMsgForm(f => ({ ...f, message: t.body }))}>Use</Btn>
+                          <Btn variant="ghost" size="sm" style={{color:'var(--danger)', marginLeft:'auto'}}
+                            onClick={async () => {
+                              if (!window.confirm(t.isDefault ? `Reset "${t.label}" to factory default?` : `Delete template "${t.label}"?`)) return;
+                              try {
+                                await api.deleteSmsTemplate(t.id);
+                                await loadTemplates();
+                                toast(t.isDefault ? 'Reset to default' : 'Template deleted');
+                              } catch (err) { toast(err.message, 'error'); }
+                            }}>{t.isDefault ? 'Reset' : 'Delete'}</Btn>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </Card>
+
                 {/* ── Template Picker ────────────────────────────────────── */}
                 <Card title="Message Template" style={{marginBottom:16}}>
                   <div className="tpl-grid">
-                    {SMS_TEMPLATES.map(t => (
+                    {smsTemplates.map(t => (
                       <button key={t.id} type="button"
                         className={`tpl-btn${msgForm.message === t.body && t.id !== 'custom' ? ' active' : ''}`}
                         onClick={() => {
