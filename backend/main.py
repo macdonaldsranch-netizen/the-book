@@ -44,7 +44,11 @@ if not firebase_admin._apps:
         firebase_admin.initialize_app(options={"projectId": _project})
 
 _db_name = os.getenv("FIRESTORE_DATABASE", "thebook")
-db = firestore.client(database=_db_name)
+try:
+    db = firestore.client(database_id=_db_name)
+except TypeError:
+    # Older firebase_admin (<6.7) used a different kwarg / no named-db support
+    db = firestore.client()
 
 # ── App ────────────────────────────────────────────────────────────────────────
 app = FastAPI(title="The Book API", version="2.0.0")
